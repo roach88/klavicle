@@ -1,6 +1,6 @@
 # Klavicle
 
-Klavicle is a command-line tool for increasing motility between your customer data and your Klaviyo campaigns.
+Klavicle is a command-line tool for increasing motility between your customer data and your Klaviyo lists, segments, tags, and campaigns.
 
 ## Features
 
