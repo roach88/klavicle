@@ -1,0 +1,24 @@
+src/
+├── kdit/
+│   ├── __init__.py
+│   ├── config.py
+│   ├── database/
+│   │   ├── __init__.py
+│   │   ├── connection.py
+│   │   └── query_manager.py
+│   ├── klaviyo/
+│   │   ├── __init__.py
+│   │   ├── client.py
+│   │   ├── profile.py
+│   │   └── list_segment.py
+│   ├── validation/
+│   │   ├── __init__.py
+│   │   ├── schemas.py
+│   │   └── handlers.py
+│   └── cli/
+│       ├── __init__.py
+│       └── main.py
+├── tests/
+│   └── __init__.py
+├── .env.example
+└── README.md
