@@ -103,9 +103,40 @@ def list():
 
 
 @list.command(name="list")
-def get_lists():
+@click.option(
+    "--sort-by",
+    type=click.Choice(["created", "updated"]),
+    default="updated",
+    help="Sort lists by created or updated date",
+)
+@click.option(
+    "--order",
+    type=click.Choice(["asc", "desc"]),
+    default="desc",
+    help="Sort order (ascending or descending)",
+)
+@click.option(
+    "--created-after",
+    type=int,
+    help="Show lists created within the last N days",
+)
+@click.option(
+    "--updated-after",
+    type=int,
+    help="Show lists updated within the last N days",
+)
+def get_lists(
+    sort_by: str, order: str, created_after: int | None, updated_after: int | None
+):
     """List all lists."""
-    run_async(get_lists_impl())
+    run_async(
+        get_lists_impl(
+            sort_by=sort_by,
+            order=order,
+            created_after=created_after,
+            updated_after=updated_after,
+        )
+    )
 
 
 @list.command(name="create")
@@ -126,9 +157,40 @@ def segment():
 
 
 @segment.command(name="list")
-def get_segments():
+@click.option(
+    "--sort-by",
+    type=click.Choice(["created", "updated"]),
+    default="updated",
+    help="Sort segments by created or updated date",
+)
+@click.option(
+    "--order",
+    type=click.Choice(["asc", "desc"]),
+    default="desc",
+    help="Sort order (ascending or descending)",
+)
+@click.option(
+    "--created-after",
+    type=int,
+    help="Show segments created within the last N days",
+)
+@click.option(
+    "--updated-after",
+    type=int,
+    help="Show segments updated within the last N days",
+)
+def get_segments(
+    sort_by: str, order: str, created_after: int | None, updated_after: int | None
+):
     """List all segments."""
-    run_async(get_segments_impl())
+    run_async(
+        get_segments_impl(
+            sort_by=sort_by,
+            order=order,
+            created_after=created_after,
+            updated_after=updated_after,
+        )
+    )
 
 
 @segment.command(name="create")
@@ -150,9 +212,40 @@ def tag():
 
 
 @tag.command(name="list")
-def get_tags():
+@click.option(
+    "--sort-by",
+    type=click.Choice(["created", "updated"]),
+    default="updated",
+    help="Sort tags by created or updated date",
+)
+@click.option(
+    "--order",
+    type=click.Choice(["asc", "desc"]),
+    default="desc",
+    help="Sort order (ascending or descending)",
+)
+@click.option(
+    "--created-after",
+    type=int,
+    help="Show tags created within the last N days",
+)
+@click.option(
+    "--updated-after",
+    type=int,
+    help="Show tags updated within the last N days",
+)
+def get_tags(
+    sort_by: str, order: str, created_after: int | None, updated_after: int | None
+):
     """List all tags."""
-    run_async(get_tags_impl())
+    run_async(
+        get_tags_impl(
+            sort_by=sort_by,
+            order=order,
+            created_after=created_after,
+            updated_after=updated_after,
+        )
+    )
 
 
 @tag.command(name="add")

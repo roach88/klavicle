@@ -3,6 +3,7 @@ import json
 import os
 from typing import Optional
 
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
@@ -13,6 +14,9 @@ from ..validation.handlers import (
     validate_profile_data,
     validate_segment_data,
 )
+
+# Load environment variables from .env file
+load_dotenv()
 
 console = Console()
 
@@ -100,17 +104,75 @@ async def update_profile_impl(profile_id: str, data: str) -> None:
         console.print(f"[red]Error:[/red] {str(e)}")
 
 
-async def get_lists_impl() -> None:
+async def get_lists_impl(
+    sort_by: str = "updated",
+    order: str = "desc",
+    created_after: Optional[int] = None,
+    updated_after: Optional[int] = None,
+) -> None:
     """Implementation of get lists command."""
     client = get_klaviyo_client()
 
     try:
-        with console.status("[bold green]Fetching lists..."):
-            lists = await client.get_lists()
+        all_lists = []
+        next_page = None
 
-        if not lists:
+        # Calculate date filters if provided
+        from datetime import datetime, timedelta
+
+        filters = []
+
+        if created_after:
+            created_date = (datetime.utcnow() - timedelta(days=created_after)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            filters.append(f"greater-than(created,{created_date})")
+
+        if updated_after:
+            updated_date = (datetime.utcnow() - timedelta(days=updated_after)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            filters.append(f"greater-than(updated,{updated_date})")
+
+        filter_string = None
+        if filters:
+            filter_string = (
+                "and(" + ",".join(filters) + ")" if len(filters) > 1 else filters[0]
+            )
+
+        with console.status("[bold green]Fetching lists...") as status:
+            while True:
+                response = await client.get_lists(
+                    page_cursor=next_page, filter_string=filter_string
+                )
+
+                if not response or "data" not in response:
+                    break
+
+                all_lists.extend(response["data"])
+
+                # Check if there are more pages
+                if (
+                    "links" in response
+                    and "next" in response["links"]
+                    and response["links"]["next"]
+                ):
+                    next_page = response["links"]["next"]
+                    status.update(
+                        f"[bold green]Fetching more lists... ({len(all_lists)} found so far)"
+                    )
+                else:
+                    break
+
+        if not all_lists:
             console.print("[yellow]No lists found.[/yellow]")
             return
+
+        # Sort lists by specified field and order
+        reverse = order == "desc"
+        all_lists.sort(
+            key=lambda x: x.get("attributes", {}).get(sort_by, ""), reverse=reverse
+        )
 
         # Create table
         table = Table(show_header=True, header_style="bold magenta")
@@ -120,14 +182,16 @@ async def get_lists_impl() -> None:
         table.add_column("Updated")
 
         # Add rows
-        for list_item in lists:
+        for list_item in all_lists:
+            attributes = list_item.get("attributes", {})
             table.add_row(
                 str(list_item.get("id", "")),
-                str(list_item.get("name", "")),
-                str(list_item.get("created", "")),
-                str(list_item.get("updated", "")),
+                str(attributes.get("name", "")),
+                str(attributes.get("created", "")),
+                str(attributes.get("updated", "")),
             )
 
+        console.print(f"\nTotal lists: {len(all_lists)}")
         console.print(table)
 
     except Exception as e:
@@ -159,17 +223,75 @@ async def create_list_impl(name: str, description: Optional[str] = None) -> None
         console.print(f"[red]Error:[/red] {str(e)}")
 
 
-async def get_segments_impl() -> None:
+async def get_segments_impl(
+    sort_by: str = "updated",
+    order: str = "desc",
+    created_after: Optional[int] = None,
+    updated_after: Optional[int] = None,
+) -> None:
     """Implementation of get segments command."""
     client = get_klaviyo_client()
 
     try:
-        with console.status("[bold green]Fetching segments..."):
-            segments = await client.get_segments()
+        all_segments = []
+        next_page = None
 
-        if not segments:
+        # Calculate date filters if provided
+        from datetime import datetime, timedelta
+
+        filters = []
+
+        if created_after:
+            created_date = (datetime.utcnow() - timedelta(days=created_after)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            filters.append(f"greater-than(created,{created_date})")
+
+        if updated_after:
+            updated_date = (datetime.utcnow() - timedelta(days=updated_after)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            filters.append(f"greater-than(updated,{updated_date})")
+
+        filter_string = None
+        if filters:
+            filter_string = (
+                "and(" + ",".join(filters) + ")" if len(filters) > 1 else filters[0]
+            )
+
+        with console.status("[bold green]Fetching segments...") as status:
+            while True:
+                response = await client.get_segments(
+                    page_cursor=next_page, filter_string=filter_string
+                )
+
+                if not response or "data" not in response:
+                    break
+
+                all_segments.extend(response["data"])
+
+                # Check if there are more pages
+                if (
+                    "links" in response
+                    and "next" in response["links"]
+                    and response["links"]["next"]
+                ):
+                    next_page = response["links"]["next"]
+                    status.update(
+                        f"[bold green]Fetching more segments... ({len(all_segments)} found so far)"
+                    )
+                else:
+                    break
+
+        if not all_segments:
             console.print("[yellow]No segments found.[/yellow]")
             return
+
+        # Sort segments by specified field and order
+        reverse = order == "desc"
+        all_segments.sort(
+            key=lambda x: x.get("attributes", {}).get(sort_by, ""), reverse=reverse
+        )
 
         # Create table
         table = Table(show_header=True, header_style="bold magenta")
@@ -179,14 +301,16 @@ async def get_segments_impl() -> None:
         table.add_column("Updated")
 
         # Add rows
-        for segment in segments:
+        for segment in all_segments:
+            attributes = segment.get("attributes", {})
             table.add_row(
                 str(segment.get("id", "")),
-                str(segment.get("name", "")),
-                str(segment.get("created", "")),
-                str(segment.get("updated", "")),
+                str(attributes.get("name", "")),
+                str(attributes.get("created", "")),
+                str(attributes.get("updated", "")),
             )
 
+        console.print(f"\nTotal segments: {len(all_segments)}")
         console.print(table)
 
     except Exception as e:
@@ -220,17 +344,75 @@ async def create_segment_impl(name: str, conditions: str) -> None:
         console.print(f"[red]Error:[/red] {str(e)}")
 
 
-async def get_tags_impl() -> None:
+async def get_tags_impl(
+    sort_by: str = "updated",
+    order: str = "desc",
+    created_after: Optional[int] = None,
+    updated_after: Optional[int] = None,
+) -> None:
     """Implementation of get tags command."""
     client = get_klaviyo_client()
 
     try:
-        with console.status("[bold green]Fetching tags..."):
-            tags = await client.get_tags()
+        all_tags = []
+        next_page = None
 
-        if not tags:
+        # Calculate date filters if provided
+        from datetime import datetime, timedelta
+
+        filters = []
+
+        if created_after:
+            created_date = (datetime.utcnow() - timedelta(days=created_after)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            filters.append(f"greater-than(created,{created_date})")
+
+        if updated_after:
+            updated_date = (datetime.utcnow() - timedelta(days=updated_after)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            filters.append(f"greater-than(updated,{updated_date})")
+
+        filter_string = None
+        if filters:
+            filter_string = (
+                "and(" + ",".join(filters) + ")" if len(filters) > 1 else filters[0]
+            )
+
+        with console.status("[bold green]Fetching tags...") as status:
+            while True:
+                response = await client.get_tags(
+                    page_cursor=next_page, filter_string=filter_string
+                )
+
+                if not response or "data" not in response:
+                    break
+
+                all_tags.extend(response["data"])
+
+                # Check if there are more pages
+                if (
+                    "links" in response
+                    and "next" in response["links"]
+                    and response["links"]["next"]
+                ):
+                    next_page = response["links"]["next"]
+                    status.update(
+                        f"[bold green]Fetching more tags... ({len(all_tags)} found so far)"
+                    )
+                else:
+                    break
+
+        if not all_tags:
             console.print("[yellow]No tags found.[/yellow]")
             return
+
+        # Sort tags by specified field and order
+        reverse = order == "desc"
+        all_tags.sort(
+            key=lambda x: x.get("attributes", {}).get(sort_by, ""), reverse=reverse
+        )
 
         # Create table
         table = Table(show_header=True, header_style="bold magenta")
@@ -240,14 +422,16 @@ async def get_tags_impl() -> None:
         table.add_column("Updated")
 
         # Add rows
-        for tag in tags:
+        for tag in all_tags:
+            attributes = tag.get("attributes", {})
             table.add_row(
                 str(tag.get("id", "")),
-                str(tag.get("name", "")),
-                str(tag.get("created", "")),
-                str(tag.get("updated", "")),
+                str(attributes.get("name", "")),
+                str(attributes.get("created", "")),
+                str(attributes.get("updated", "")),
             )
 
+        console.print(f"\nTotal tags: {len(all_tags)}")
         console.print(table)
 
     except Exception as e:
