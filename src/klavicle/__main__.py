@@ -1,4 +1,6 @@
-from .cli.commands import cli
+"""Main entry point for Klavicle CLI."""
+
+from .cli.main import cli
 
 if __name__ == "__main__":
     cli()

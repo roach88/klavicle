@@ -1,7 +1,11 @@
+from typing import Optional
+
 import click
 
 from .klaviyo_commands import (
     add_tags_impl,
+    analyze_tags_impl,
+    cleanup_tags_impl,
     create_list_impl,
     create_profile_impl,
     create_segment_impl,
@@ -269,11 +273,40 @@ def add_tags(resource_type: str, resource_id: str, tags: tuple):
 def remove_tags(resource_type: str, resource_id: str, tags: tuple):
     """Remove tags from a resource.
 
-    RESOURCE_TYPE is the type of resource (profile, list, segment).
-    RESOURCE_ID is the ID of the resource.
-    TAGS are the tags to remove.
+    RESOURCE_TYPE must be either 'list' or 'segment'
+    RESOURCE_ID is the ID of the resource
+    TAGS is a space-separated list of tag names
     """
     run_async(remove_tags_impl(resource_type, resource_id, list(tags)))
+
+
+@tag.command(name="analyze")
+@click.option(
+    "--export",
+    type=click.Choice(["csv", "json"]),
+    help="Export analysis to CSV or JSON file",
+)
+def analyze_tags(export: Optional[str]):
+    """Analyze tag usage across your account.
+
+    Optionally export the analysis to CSV or JSON format.
+    """
+    run_async(analyze_tags_impl(export_format=export))
+
+
+@tag.command(name="cleanup")
+@click.option(
+    "--dry-run/--no-dry-run",
+    default=True,
+    help="Show what would be deleted without actually deleting",
+)
+def cleanup_tags(dry_run: bool):
+    """Clean up unused tags from your account.
+
+    By default, runs in dry-run mode which only shows what would be deleted.
+    Use --no-dry-run to actually delete the tags.
+    """
+    run_async(cleanup_tags_impl(dry_run=dry_run))
 
 
 if __name__ == "__main__":

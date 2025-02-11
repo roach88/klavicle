@@ -2,6 +2,13 @@ import click
 from rich.console import Console
 from rich.panel import Panel
 
+from .klaviyo_commands import (
+    analyze_campaigns_impl,
+    analyze_flows_impl,
+    analyze_lists_impl,
+    run_async,
+)
+
 console = Console()
 
 
@@ -107,6 +114,17 @@ def create_list(name: str, description: str):
     pass
 
 
+@lists.command("analyze")
+@click.option(
+    "--export-format",
+    type=click.Choice(["json", "csv"]),
+    help="Export format for analysis results",
+)
+def analyze_lists(export_format: str):
+    """Analyze all lists and provide insights and recommendations."""
+    run_async(analyze_lists_impl(export_format=export_format))
+
+
 @cli.group()
 def segments():
     """Segment management commands."""
@@ -151,6 +169,46 @@ def remove_tags(resource_type: str, resource_id: str, tags: str):
     """Remove tags from a resource."""
     # Implementation will go here
     pass
+
+
+@cli.group()
+def flows():
+    """Flow management and analysis commands."""
+    pass
+
+
+@flows.command("analyze")
+@click.option(
+    "--days",
+    type=int,
+    default=30,
+    help="Number of days to analyze for performance metrics",
+)
+@click.option(
+    "--export-format",
+    type=click.Choice(["json", "csv"]),
+    help="Export format for analysis results",
+)
+def analyze_flows(days: int, export_format: str):
+    """Analyze all flows and provide insights and recommendations."""
+    run_async(analyze_flows_impl(days=days, export_format=export_format))
+
+
+@cli.group()
+def campaigns():
+    """Campaign management and analysis commands."""
+    pass
+
+
+@campaigns.command("analyze")
+@click.option(
+    "--export-format",
+    type=click.Choice(["json", "csv"]),
+    help="Export format for analysis results",
+)
+def analyze_campaigns(export_format: str):
+    """Analyze all campaigns and provide insights and recommendations."""
+    run_async(analyze_campaigns_impl(export_format=export_format))
 
 
 if __name__ == "__main__":
