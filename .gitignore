@@ -53,3 +53,7 @@ Thumbs.db
 
 # Project specific
 setup/
+
+# Analysis outputs
+*_analysis_*.csv
+*_analysis_*.json
