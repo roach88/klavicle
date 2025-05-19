@@ -2,10 +2,22 @@ import click
 from rich.console import Console
 from rich.panel import Panel
 
+from .config_commands import (
+    export_config_impl,
+    get_config_impl,
+    import_config_impl,
+    set_api_key_impl,
+    set_config_impl,
+    set_default_provider_impl,
+    unset_config_impl,
+)
 from .klaviyo_commands import (
     analyze_campaigns_impl,
     analyze_flows_impl,
     analyze_lists_impl,
+    export_data_for_ai_impl,
+    import_data_for_ai_impl,
+    unified_ai_analysis_impl,
     run_async,
 )
 
@@ -40,6 +52,62 @@ def cli(verbose: bool, dry_run: bool, config: str, log_level: str):
 
 
 # Query Management Commands
+@cli.group()
+def config():
+    """Configuration management commands."""
+    pass
+
+
+@config.command("get")
+def get_config():
+    """Display current configuration."""
+    get_config_impl()
+
+
+@config.command("set")
+@click.argument("key")
+@click.argument("value")
+def set_config(key: str, value: str):
+    """Set a configuration value."""
+    set_config_impl(key, value)
+
+
+@config.command("unset")
+@click.argument("key")
+def unset_config(key: str):
+    """Remove a configuration value."""
+    unset_config_impl(key)
+
+
+@config.command("set-api-key")
+@click.argument("provider", type=click.Choice(["openai", "anthropic"]))
+@click.argument("api_key")
+def set_api_key(provider: str, api_key: str):
+    """Set API key for an AI provider."""
+    set_api_key_impl(provider, api_key)
+
+
+@config.command("set-default-provider")
+@click.argument("provider", type=click.Choice(["openai", "anthropic", "mock"]))
+def set_default_provider(provider: str):
+    """Set default AI provider."""
+    set_default_provider_impl(provider)
+
+
+@config.command("export")
+@click.argument("file_path")
+def export_config(file_path: str):
+    """Export configuration to a file."""
+    export_config_impl(file_path)
+
+
+@config.command("import")
+@click.argument("file_path", type=click.Path(exists=True))
+def import_config(file_path: str):
+    """Import configuration from a file."""
+    import_config_impl(file_path)
+
+
 @cli.group()
 def query():
     """Query management commands."""
@@ -120,9 +188,28 @@ def create_list(name: str, description: str):
     type=click.Choice(["json", "csv"]),
     help="Export format for analysis results",
 )
-def analyze_lists(export_format: str):
+@click.option(
+    "--ai",
+    is_flag=True,
+    help="Use AI-powered analysis to provide enhanced insights",
+)
+@click.option(
+    "--ai-provider",
+    type=click.Choice(["openai", "anthropic", "mock"]),
+    help="AI provider to use for analysis (requires API key)",
+)
+def analyze_lists(export_format: str, ai: bool, ai_provider: str):
     """Analyze all lists and provide insights and recommendations."""
-    run_async(analyze_lists_impl(export_format=export_format))
+    # If ai_provider is not specified, use default from config
+    if ai and not ai_provider:
+        from ..config import get_config
+        ai_provider = get_config().get_default_ai_provider()
+    
+    run_async(analyze_lists_impl(
+        export_format=export_format,
+        use_ai=ai,
+        ai_provider=ai_provider
+    ))
 
 
 @cli.group()
@@ -189,9 +276,29 @@ def flows():
     type=click.Choice(["json", "csv"]),
     help="Export format for analysis results",
 )
-def analyze_flows(days: int, export_format: str):
+@click.option(
+    "--ai",
+    is_flag=True,
+    help="Use AI-powered analysis to provide enhanced insights",
+)
+@click.option(
+    "--ai-provider",
+    type=click.Choice(["openai", "anthropic", "mock"]),
+    help="AI provider to use for analysis (requires API key)",
+)
+def analyze_flows(days: int, export_format: str, ai: bool, ai_provider: str):
     """Analyze all flows and provide insights and recommendations."""
-    run_async(analyze_flows_impl(days=days, export_format=export_format))
+    # If ai_provider is not specified, use default from config
+    if ai and not ai_provider:
+        from ..config import get_config
+        ai_provider = get_config().get_default_ai_provider()
+    
+    run_async(analyze_flows_impl(
+        days=days,
+        export_format=export_format,
+        use_ai=ai,
+        ai_provider=ai_provider
+    ))
 
 
 @cli.group()
@@ -206,9 +313,81 @@ def campaigns():
     type=click.Choice(["json", "csv"]),
     help="Export format for analysis results",
 )
-def analyze_campaigns(export_format: str):
+@click.option(
+    "--ai",
+    is_flag=True,
+    help="Use AI-powered analysis to provide enhanced insights",
+)
+@click.option(
+    "--ai-provider",
+    type=click.Choice(["openai", "anthropic", "mock"]),
+    help="AI provider to use for analysis (requires API key)",
+)
+def analyze_campaigns(export_format: str, ai: bool, ai_provider: str):
     """Analyze all campaigns and provide insights and recommendations."""
-    run_async(analyze_campaigns_impl(export_format=export_format))
+    # If ai_provider is not specified, use default from config
+    if ai and not ai_provider:
+        from ..config import get_config
+        ai_provider = get_config().get_default_ai_provider()
+    
+    run_async(analyze_campaigns_impl(
+        export_format=export_format,
+        use_ai=ai,
+        ai_provider=ai_provider
+    ))
+
+
+@cli.group()
+def ai():
+    """AI-powered analysis commands."""
+    pass
+
+
+@ai.command("export")
+@click.argument("data_type", type=click.Choice(["campaigns", "flows", "lists"]))
+@click.option(
+    "--file", 
+    help="Custom file name for the export",
+)
+@click.option(
+    "--dir", 
+    help="Directory to export to (defaults to ./exports)",
+)
+def export_for_ai(data_type: str, file: str, dir: str):
+    """Export data for offline AI analysis."""
+    run_async(export_data_for_ai_impl(
+        data_type=data_type,
+        file_path=file,
+        export_dir=dir
+    ))
+
+
+@ai.command("import")
+@click.argument("file_path", type=click.Path(exists=True))
+@click.option(
+    "--provider",
+    type=click.Choice(["openai", "anthropic", "mock"]),
+    help="AI provider to use for analysis (requires API key)",
+)
+def import_for_ai(file_path: str, provider: str):
+    """Import and analyze data using AI."""
+    run_async(import_data_for_ai_impl(
+        file_path=file_path,
+        provider=provider
+    ))
+
+
+@ai.command("unified")
+@click.option(
+    "--provider",
+    type=click.Choice(["openai", "anthropic", "mock"]),
+    help="AI provider to use for analysis (requires API key)",
+)
+def unified_analysis(provider: str):
+    """Run unified AI analysis across all entities (campaigns, flows, lists)."""
+    run_async(unified_ai_analysis_impl(
+        provider=provider
+    ))
 
 
 if __name__ == "__main__":

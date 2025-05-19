@@ -700,9 +700,20 @@ async def cleanup_tags_impl(dry_run: bool = True) -> None:
 
 
 async def analyze_flows_impl(
-    days: Optional[int] = 30, export_format: Optional[str] = None
+    days: Optional[int] = 30, 
+    export_format: Optional[str] = None,
+    use_ai: bool = False,
+    ai_provider: str = "mock"
 ) -> None:
-    """Analyze all flows in the Klaviyo account and provide insights."""
+    """
+    Analyze all flows in the Klaviyo account and provide insights.
+    
+    Args:
+        days: Number of days to analyze for performance metrics
+        export_format: Optional format to export results ("json" or "csv")
+        use_ai: Whether to use AI-powered analysis
+        ai_provider: AI provider to use ("openai", "anthropic", or "mock")
+    """
     client = get_klaviyo_client()
     analyzer = FlowAnalyzer(client)
 
@@ -711,7 +722,7 @@ async def analyze_flows_impl(
             # Get flow statistics
             flow_stats = await analyzer.analyze_all_flows()
 
-            # Print analysis to console
+            # Print standard analysis to console
             analyzer.print_flow_analysis(flow_stats)
 
             # Get cleanup recommendations
@@ -721,6 +732,20 @@ async def analyze_flows_impl(
                 console.print("\n[bold]Cleanup Recommendations:[/bold]")
                 for rec in recommendations:
                     console.print(rec)
+                    
+            # Run AI analysis if requested
+            if use_ai and flow_stats:
+                console.print("\n[bold blue]Running AI Flow Analysis...[/bold blue]")
+                with console.status("[bold green]Generating AI insights for flows..."):
+                    try:
+                        ai_results = await analyzer.get_ai_analysis(
+                            flow_stats=flow_stats,
+                            provider=ai_provider
+                        )
+                        analyzer.print_ai_analysis(ai_results)
+                    except Exception as e:
+                        console.print(f"[bold red]AI flow analysis failed:[/bold red] {str(e)}")
+                        console.print("[yellow]Falling back to standard analysis only.[/yellow]")
 
             # Export if requested
             if export_format:
@@ -792,8 +817,19 @@ async def analyze_flows_impl(
         raise
 
 
-async def analyze_lists_impl(export_format: Optional[str] = None) -> None:
-    """Analyze all lists in the Klaviyo account and provide insights."""
+async def analyze_lists_impl(
+    export_format: Optional[str] = None,
+    use_ai: bool = False,
+    ai_provider: str = "mock"
+) -> None:
+    """
+    Analyze all lists in the Klaviyo account and provide insights.
+    
+    Args:
+        export_format: Optional format to export results ("json" or "csv")
+        use_ai: Whether to use AI-powered analysis
+        ai_provider: AI provider to use ("openai", "anthropic", or "mock")
+    """
     client = get_klaviyo_client()
     analyzer = ListAnalyzer(client)
 
@@ -802,7 +838,7 @@ async def analyze_lists_impl(export_format: Optional[str] = None) -> None:
             # Get list statistics
             list_stats = await analyzer.analyze_all_lists()
 
-            # Print analysis to console
+            # Print standard analysis to console
             analyzer.print_list_analysis(list_stats)
 
             # Get cleanup recommendations
@@ -812,6 +848,20 @@ async def analyze_lists_impl(export_format: Optional[str] = None) -> None:
                 console.print("\n[bold]Cleanup Recommendations:[/bold]")
                 for rec in recommendations:
                     console.print(rec)
+                    
+            # Run AI analysis if requested
+            if use_ai and list_stats:
+                console.print("\n[bold blue]Running AI List Analysis...[/bold blue]")
+                with console.status("[bold green]Generating AI insights for lists..."):
+                    try:
+                        ai_results = await analyzer.get_ai_analysis(
+                            list_stats=list_stats,
+                            provider=ai_provider
+                        )
+                        analyzer.print_ai_analysis(ai_results)
+                    except Exception as e:
+                        console.print(f"[bold red]AI list analysis failed:[/bold red] {str(e)}")
+                        console.print("[yellow]Falling back to standard analysis only.[/yellow]")
 
             # Export if requested
             if export_format:
@@ -887,8 +937,19 @@ async def analyze_lists_impl(export_format: Optional[str] = None) -> None:
         raise
 
 
-async def analyze_campaigns_impl(export_format: Optional[str] = None) -> None:
-    """Analyze all campaigns in the Klaviyo account and provide insights."""
+async def analyze_campaigns_impl(
+    export_format: Optional[str] = None, 
+    use_ai: bool = False,
+    ai_provider: str = "mock"
+) -> None:
+    """
+    Analyze all campaigns in the Klaviyo account and provide insights.
+    
+    Args:
+        export_format: Optional format to export results ("json" or "csv")
+        use_ai: Whether to use AI-powered analysis
+        ai_provider: AI provider to use ("openai", "anthropic", or "mock")
+    """
     client = get_klaviyo_client()
     analyzer = CampaignAnalyzer(client)
 
@@ -897,7 +958,7 @@ async def analyze_campaigns_impl(export_format: Optional[str] = None) -> None:
             # Get campaign statistics
             campaign_stats = await analyzer.analyze_all_campaigns()
 
-            # Print analysis to console
+            # Print standard analysis to console
             analyzer.print_campaign_analysis(campaign_stats)
 
             # Get cleanup recommendations
@@ -907,6 +968,20 @@ async def analyze_campaigns_impl(export_format: Optional[str] = None) -> None:
                 console.print("\n[bold]Cleanup Recommendations:[/bold]")
                 for rec in recommendations:
                     console.print(rec)
+                    
+            # Run AI analysis if requested
+            if use_ai and campaign_stats:
+                console.print("\n[bold blue]Running AI Analysis...[/bold blue]")
+                with console.status("[bold green]Generating AI insights..."):
+                    try:
+                        ai_results = await analyzer.get_ai_analysis(
+                            campaign_stats=campaign_stats,
+                            provider=ai_provider
+                        )
+                        analyzer.print_ai_analysis(ai_results)
+                    except Exception as e:
+                        console.print(f"[bold red]AI analysis failed:[/bold red] {str(e)}")
+                        console.print("[yellow]Falling back to standard analysis only.[/yellow]")
 
             # Export if requested
             if export_format:
@@ -1010,6 +1085,295 @@ async def analyze_campaigns_impl(export_format: Optional[str] = None) -> None:
     except Exception as e:
         console.print(f"[red]Error analyzing campaigns: {str(e)}[/red]")
         raise
+
+
+async def export_data_for_ai_impl(
+    data_type: str,
+    file_path: Optional[str] = None,
+    export_dir: Optional[str] = None
+) -> None:
+    """
+    Implementation of export data for AI analysis command.
+    
+    Args:
+        data_type: Type of data to export ("campaigns", "flows", "lists")
+        file_path: Optional custom file path
+        export_dir: Optional directory to export to
+    """
+    client = get_klaviyo_client()
+    
+    try:
+        from ..ai.export import export_data_for_ai_analysis
+        
+        # Based on data type, get the appropriate data
+        if data_type == "campaigns":
+            analyzer = CampaignAnalyzer(client)
+            with console.status("[bold green]Fetching campaign data for export..."):
+                data = await analyzer.analyze_all_campaigns()
+                export_data = [
+                    {
+                        "id": stat.id,
+                        "name": stat.name,
+                        "status": stat.status,
+                        "created": stat.created.isoformat(),
+                        "updated": stat.updated.isoformat(),
+                        "send_time": stat.send_time.isoformat() if stat.send_time else None,
+                        "channel": stat.channel,
+                        "message_type": stat.message_type,
+                        "subject_line": stat.subject_line,
+                        "from_email": stat.from_email,
+                        "from_name": stat.from_name,
+                        "tags": stat.tags,
+                        "metrics": {
+                            "recipient_count": stat.recipient_count,
+                            "open_rate": stat.open_rate,
+                            "click_rate": stat.click_rate,
+                            "revenue": stat.revenue,
+                        }
+                    }
+                    for stat in data
+                ]
+                
+        elif data_type == "flows":
+            analyzer = FlowAnalyzer(client)
+            with console.status("[bold green]Fetching flow data for export..."):
+                data = await analyzer.analyze_all_flows()
+                export_data = [
+                    {
+                        "id": stat.id,
+                        "name": stat.name,
+                        "status": stat.status,
+                        "archived": stat.archived,
+                        "created": stat.created.isoformat(),
+                        "updated": stat.updated.isoformat(),
+                        "trigger_type": stat.trigger_type,
+                        "structure": {
+                            "action_count": stat.action_count,
+                            "email_count": stat.email_count,
+                            "sms_count": stat.sms_count,
+                            "time_delay_count": stat.time_delay_count,
+                        },
+                        "tags": stat.tags,
+                    }
+                    for stat in data
+                ]
+                
+        elif data_type == "lists":
+            analyzer = ListAnalyzer(client)
+            with console.status("[bold green]Fetching list data for export..."):
+                data = await analyzer.analyze_all_lists()
+                export_data = [
+                    {
+                        "id": stat.id,
+                        "name": stat.name,
+                        "created": stat.created.isoformat(),
+                        "updated": stat.updated.isoformat(),
+                        "profile_count": stat.profile_count,
+                        "is_dynamic": stat.is_dynamic,
+                        "folder_name": stat.folder_name,
+                        "tags": stat.tags,
+                    }
+                    for stat in data
+                ]
+                
+        else:
+            console.print(f"[yellow]Unsupported data type: {data_type}[/yellow]")
+            console.print("[yellow]Supported types: campaigns, flows, lists[/yellow]")
+            return
+
+        # Export the data
+        export_path = export_data_for_ai_analysis(
+            data_type=data_type,
+            data=export_data,
+            export_dir=export_dir,
+            file_name=file_path
+        )
+        
+        console.print(f"[green]Data exported successfully to: {export_path}[/green]")
+        console.print(
+            "\nYou can use this exported data for offline AI analysis or import it with:\n"
+            f"[bold]klavicle ai import {export_path}[/bold]"
+        )
+        
+    except Exception as e:
+        console.print(f"[red]Error exporting data: {str(e)}[/red]")
+
+
+async def unified_ai_analysis_impl(
+    provider: Optional[str] = None
+) -> None:
+    """
+    Implementation of unified AI analysis command.
+    
+    Args:
+        provider: AI provider to use ("openai", "anthropic", or "mock")
+    """
+    client = get_klaviyo_client()
+    
+    try:
+        from ..ai.export import export_ai_analysis_results
+        from ..ai.analyzer import AIAnalyzer
+        
+        # If provider is not specified, use default from config
+        if not provider:
+            from ..config import get_config
+            provider = get_config().get_default_ai_provider()
+        
+        # Create analyzers
+        campaign_analyzer = CampaignAnalyzer(client)
+        flow_analyzer = FlowAnalyzer(client)
+        list_analyzer = ListAnalyzer(client)
+        
+        # Fetch all data
+        with console.status("[bold green]Fetching campaigns data..."):
+            campaign_stats = await campaign_analyzer.analyze_all_campaigns()
+            campaign_data = [
+                {
+                    "id": stat.id,
+                    "name": stat.name,
+                    "status": stat.status,
+                    "created": stat.created.isoformat(),
+                    "updated": stat.updated.isoformat(),
+                    "send_time": stat.send_time.isoformat() if stat.send_time else None,
+                    "channel": stat.channel,
+                    "message_type": stat.message_type,
+                    "subject_line": stat.subject_line,
+                    "from_email": stat.from_email,
+                    "from_name": stat.from_name,
+                    "tags": stat.tags,
+                    "metrics": {
+                        "recipient_count": stat.recipient_count,
+                        "open_rate": stat.open_rate,
+                        "click_rate": stat.click_rate,
+                        "revenue": stat.revenue,
+                    }
+                }
+                for stat in campaign_stats
+            ]
+            
+        with console.status("[bold green]Fetching flows data..."):
+            flow_stats = await flow_analyzer.analyze_all_flows()
+            flow_data = [
+                {
+                    "id": stat.id,
+                    "name": stat.name,
+                    "status": stat.status,
+                    "archived": stat.archived,
+                    "created": stat.created.isoformat(),
+                    "updated": stat.updated.isoformat(),
+                    "trigger_type": stat.trigger_type,
+                    "structure": {
+                        "action_count": stat.action_count,
+                        "email_count": stat.email_count,
+                        "sms_count": stat.sms_count,
+                        "time_delay_count": stat.time_delay_count,
+                    },
+                    "tags": stat.tags,
+                }
+                for stat in flow_stats
+            ]
+            
+        with console.status("[bold green]Fetching lists data..."):
+            list_stats = await list_analyzer.analyze_all_lists()
+            list_data = [
+                {
+                    "id": stat.id,
+                    "name": stat.name,
+                    "created": stat.created.isoformat(),
+                    "updated": stat.updated.isoformat(),
+                    "profile_count": stat.profile_count,
+                    "is_dynamic": stat.is_dynamic,
+                    "folder_name": stat.folder_name,
+                    "tags": stat.tags,
+                }
+                for stat in list_stats
+            ]
+        
+        # Combine all data into a unified structure
+        unified_data = {
+            "campaigns": campaign_data,
+            "flows": flow_data,
+            "lists": list_data
+        }
+        
+        # Create AI analyzer and analyze the unified data
+        analyzer = AIAnalyzer(provider=provider)
+        with console.status(f"[bold green]Performing unified AI analysis using {provider}..."):
+            # Convert data to JSON string
+            data_json = json.dumps(unified_data)
+            
+            # Analyze the unified data
+            analysis_results = await analyzer.analyze_data("unified", data_json)
+            
+        # Print the analysis results
+        console.print(f"\n[bold blue]Unified AI Analysis Results[/bold blue]")
+        analyzer.format_insights_for_display(analysis_results)
+        
+        # Export the analysis results
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_path = export_ai_analysis_results(
+            results=analysis_results,
+            data_type="unified",
+            file_name=f"unified_analysis_{timestamp}.json"
+        )
+        
+        console.print(f"\n[green]Analysis results exported to: {results_path}[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]Error during unified AI analysis: {str(e)}[/red]")
+
+
+async def import_data_for_ai_impl(
+    file_path: str,
+    provider: Optional[str] = None
+) -> None:
+    """
+    Implementation of import and analyze data for AI command.
+    
+    Args:
+        file_path: Path to the exported data file
+        provider: AI provider to use ("openai", "anthropic", or "mock")
+    """
+    try:
+        from ..ai.export import import_data_for_ai_analysis, export_ai_analysis_results
+        from ..ai.analyzer import AIAnalyzer
+        
+        # Import the data
+        with console.status("[bold green]Importing data..."):
+            imported_data = import_data_for_ai_analysis(file_path)
+            data_type = imported_data["data_type"]
+            data = imported_data["data"]
+            
+        # If provider is not specified, use default from config
+        if not provider:
+            from ..config import get_config
+            provider = get_config().get_default_ai_provider()
+            
+        # Create AI analyzer and analyze the data
+        analyzer = AIAnalyzer(provider=provider)
+        with console.status(f"[bold green]Analyzing {data_type} data using {provider}..."):
+            # Convert data to JSON string
+            data_json = json.dumps(data)
+            
+            # Analyze the data
+            analysis_results = await analyzer.analyze_data(data_type, data_json)
+            
+        # Print the analysis results
+        console.print(f"\n[bold blue]AI Analysis Results for {data_type}[/bold blue]")
+        analyzer.format_insights_for_display(analysis_results)
+        
+        # Export the analysis results if requested
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_path = export_ai_analysis_results(
+            results=analysis_results,
+            data_type=data_type,
+            file_name=f"{data_type}_analysis_{timestamp}.json"
+        )
+        
+        console.print(f"\n[green]Analysis results exported to: {results_path}[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]Error during AI analysis: {str(e)}[/red]")
 
 
 def run_async(coro):
