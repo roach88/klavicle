@@ -3,12 +3,13 @@ import csv
 import json
 import os
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, cast
 
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
+from ..ai.analyzer import ProviderType
 from ..klaviyo.campaign_analyzer import CampaignAnalyzer
 from ..klaviyo.client import KlaviyoClient
 from ..klaviyo.flow_analyzer import FlowAnalyzer
@@ -700,14 +701,14 @@ async def cleanup_tags_impl(dry_run: bool = True) -> None:
 
 
 async def analyze_flows_impl(
-    days: Optional[int] = 30, 
+    days: Optional[int] = 30,
     export_format: Optional[str] = None,
     use_ai: bool = False,
-    ai_provider: str = "mock"
+    ai_provider: str = "mock",
 ) -> None:
     """
     Analyze all flows in the Klaviyo account and provide insights.
-    
+
     Args:
         days: Number of days to analyze for performance metrics
         export_format: Optional format to export results ("json" or "csv")
@@ -732,7 +733,7 @@ async def analyze_flows_impl(
                 console.print("\n[bold]Cleanup Recommendations:[/bold]")
                 for rec in recommendations:
                     console.print(rec)
-                    
+
             # Run AI analysis if requested
             if use_ai and flow_stats:
                 console.print("\n[bold blue]Running AI Flow Analysis...[/bold blue]")
@@ -740,12 +741,16 @@ async def analyze_flows_impl(
                     try:
                         ai_results = await analyzer.get_ai_analysis(
                             flow_stats=flow_stats,
-                            provider=ai_provider
+                            provider=cast(ProviderType, ai_provider),
                         )
                         analyzer.print_ai_analysis(ai_results)
                     except Exception as e:
-                        console.print(f"[bold red]AI flow analysis failed:[/bold red] {str(e)}")
-                        console.print("[yellow]Falling back to standard analysis only.[/yellow]")
+                        console.print(
+                            f"[bold red]AI flow analysis failed:[/bold red] {str(e)}"
+                        )
+                        console.print(
+                            "[yellow]Falling back to standard analysis only.[/yellow]"
+                        )
 
             # Export if requested
             if export_format:
@@ -818,13 +823,11 @@ async def analyze_flows_impl(
 
 
 async def analyze_lists_impl(
-    export_format: Optional[str] = None,
-    use_ai: bool = False,
-    ai_provider: str = "mock"
+    export_format: Optional[str] = None, use_ai: bool = False, ai_provider: str = "mock"
 ) -> None:
     """
     Analyze all lists in the Klaviyo account and provide insights.
-    
+
     Args:
         export_format: Optional format to export results ("json" or "csv")
         use_ai: Whether to use AI-powered analysis
@@ -848,7 +851,7 @@ async def analyze_lists_impl(
                 console.print("\n[bold]Cleanup Recommendations:[/bold]")
                 for rec in recommendations:
                     console.print(rec)
-                    
+
             # Run AI analysis if requested
             if use_ai and list_stats:
                 console.print("\n[bold blue]Running AI List Analysis...[/bold blue]")
@@ -856,12 +859,16 @@ async def analyze_lists_impl(
                     try:
                         ai_results = await analyzer.get_ai_analysis(
                             list_stats=list_stats,
-                            provider=ai_provider
+                            provider=cast(ProviderType, ai_provider),
                         )
                         analyzer.print_ai_analysis(ai_results)
                     except Exception as e:
-                        console.print(f"[bold red]AI list analysis failed:[/bold red] {str(e)}")
-                        console.print("[yellow]Falling back to standard analysis only.[/yellow]")
+                        console.print(
+                            f"[bold red]AI list analysis failed:[/bold red] {str(e)}"
+                        )
+                        console.print(
+                            "[yellow]Falling back to standard analysis only.[/yellow]"
+                        )
 
             # Export if requested
             if export_format:
@@ -938,13 +945,11 @@ async def analyze_lists_impl(
 
 
 async def analyze_campaigns_impl(
-    export_format: Optional[str] = None, 
-    use_ai: bool = False,
-    ai_provider: str = "mock"
+    export_format: Optional[str] = None, use_ai: bool = False, ai_provider: str = "mock"
 ) -> None:
     """
     Analyze all campaigns in the Klaviyo account and provide insights.
-    
+
     Args:
         export_format: Optional format to export results ("json" or "csv")
         use_ai: Whether to use AI-powered analysis
@@ -968,7 +973,7 @@ async def analyze_campaigns_impl(
                 console.print("\n[bold]Cleanup Recommendations:[/bold]")
                 for rec in recommendations:
                     console.print(rec)
-                    
+
             # Run AI analysis if requested
             if use_ai and campaign_stats:
                 console.print("\n[bold blue]Running AI Analysis...[/bold blue]")
@@ -976,12 +981,16 @@ async def analyze_campaigns_impl(
                     try:
                         ai_results = await analyzer.get_ai_analysis(
                             campaign_stats=campaign_stats,
-                            provider=ai_provider
+                            provider=cast(ProviderType, ai_provider),
                         )
                         analyzer.print_ai_analysis(ai_results)
                     except Exception as e:
-                        console.print(f"[bold red]AI analysis failed:[/bold red] {str(e)}")
-                        console.print("[yellow]Falling back to standard analysis only.[/yellow]")
+                        console.print(
+                            f"[bold red]AI analysis failed:[/bold red] {str(e)}"
+                        )
+                        console.print(
+                            "[yellow]Falling back to standard analysis only.[/yellow]"
+                        )
 
             # Export if requested
             if export_format:
@@ -1088,23 +1097,21 @@ async def analyze_campaigns_impl(
 
 
 async def export_data_for_ai_impl(
-    data_type: str,
-    file_path: Optional[str] = None,
-    export_dir: Optional[str] = None
+    data_type: str, file_path: Optional[str] = None, export_dir: Optional[str] = None
 ) -> None:
     """
     Implementation of export data for AI analysis command.
-    
+
     Args:
         data_type: Type of data to export ("campaigns", "flows", "lists")
         file_path: Optional custom file path
         export_dir: Optional directory to export to
     """
     client = get_klaviyo_client()
-    
+
     try:
         from ..ai.export import export_data_for_ai_analysis
-        
+
         # Based on data type, get the appropriate data
         if data_type == "campaigns":
             analyzer = CampaignAnalyzer(client)
@@ -1117,7 +1124,9 @@ async def export_data_for_ai_impl(
                         "status": stat.status,
                         "created": stat.created.isoformat(),
                         "updated": stat.updated.isoformat(),
-                        "send_time": stat.send_time.isoformat() if stat.send_time else None,
+                        "send_time": stat.send_time.isoformat()
+                        if stat.send_time
+                        else None,
                         "channel": stat.channel,
                         "message_type": stat.message_type,
                         "subject_line": stat.subject_line,
@@ -1129,11 +1138,11 @@ async def export_data_for_ai_impl(
                             "open_rate": stat.open_rate,
                             "click_rate": stat.click_rate,
                             "revenue": stat.revenue,
-                        }
+                        },
                     }
                     for stat in data
                 ]
-                
+
         elif data_type == "flows":
             analyzer = FlowAnalyzer(client)
             with console.status("[bold green]Fetching flow data for export..."):
@@ -1157,7 +1166,7 @@ async def export_data_for_ai_impl(
                     }
                     for stat in data
                 ]
-                
+
         elif data_type == "lists":
             analyzer = ListAnalyzer(client)
             with console.status("[bold green]Fetching list data for export..."):
@@ -1175,7 +1184,7 @@ async def export_data_for_ai_impl(
                     }
                     for stat in data
                 ]
-                
+
         else:
             console.print(f"[yellow]Unsupported data type: {data_type}[/yellow]")
             console.print("[yellow]Supported types: campaigns, flows, lists[/yellow]")
@@ -1186,44 +1195,43 @@ async def export_data_for_ai_impl(
             data_type=data_type,
             data=export_data,
             export_dir=export_dir,
-            file_name=file_path
+            file_name=file_path,
         )
-        
+
         console.print(f"[green]Data exported successfully to: {export_path}[/green]")
         console.print(
             "\nYou can use this exported data for offline AI analysis or import it with:\n"
             f"[bold]klavicle ai import {export_path}[/bold]"
         )
-        
+
     except Exception as e:
         console.print(f"[red]Error exporting data: {str(e)}[/red]")
 
 
-async def unified_ai_analysis_impl(
-    provider: Optional[str] = None
-) -> None:
+async def unified_ai_analysis_impl(provider: Optional[str] = None) -> None:
     """
     Implementation of unified AI analysis command.
-    
+
     Args:
         provider: AI provider to use ("openai", "anthropic", or "mock")
     """
     client = get_klaviyo_client()
-    
+
     try:
-        from ..ai.export import export_ai_analysis_results
         from ..ai.analyzer import AIAnalyzer
-        
+        from ..ai.export import export_ai_analysis_results
+
         # If provider is not specified, use default from config
         if not provider:
             from ..config import get_config
+
             provider = get_config().get_default_ai_provider()
-        
+
         # Create analyzers
         campaign_analyzer = CampaignAnalyzer(client)
         flow_analyzer = FlowAnalyzer(client)
         list_analyzer = ListAnalyzer(client)
-        
+
         # Fetch all data
         with console.status("[bold green]Fetching campaigns data..."):
             campaign_stats = await campaign_analyzer.analyze_all_campaigns()
@@ -1246,11 +1254,11 @@ async def unified_ai_analysis_impl(
                         "open_rate": stat.open_rate,
                         "click_rate": stat.click_rate,
                         "revenue": stat.revenue,
-                    }
+                    },
                 }
                 for stat in campaign_stats
             ]
-            
+
         with console.status("[bold green]Fetching flows data..."):
             flow_stats = await flow_analyzer.analyze_all_flows()
             flow_data = [
@@ -1272,7 +1280,7 @@ async def unified_ai_analysis_impl(
                 }
                 for stat in flow_stats
             ]
-            
+
         with console.status("[bold green]Fetching lists data..."):
             list_stats = await list_analyzer.analyze_all_lists()
             list_data = [
@@ -1288,90 +1296,94 @@ async def unified_ai_analysis_impl(
                 }
                 for stat in list_stats
             ]
-        
+
         # Combine all data into a unified structure
         unified_data = {
             "campaigns": campaign_data,
             "flows": flow_data,
-            "lists": list_data
+            "lists": list_data,
         }
-        
+
         # Create AI analyzer and analyze the unified data
-        analyzer = AIAnalyzer(provider=provider)
-        with console.status(f"[bold green]Performing unified AI analysis using {provider}..."):
+        analyzer = AIAnalyzer(provider=cast(ProviderType, provider))
+        with console.status(
+            f"[bold green]Performing unified AI analysis using {provider}..."
+        ):
             # Convert data to JSON string
             data_json = json.dumps(unified_data)
-            
+
             # Analyze the unified data
             analysis_results = await analyzer.analyze_data("unified", data_json)
-            
+
         # Print the analysis results
-        console.print(f"\n[bold blue]Unified AI Analysis Results[/bold blue]")
+        console.print("\n[bold blue]Unified AI Analysis Results[/bold blue]")
         analyzer.format_insights_for_display(analysis_results)
-        
+
         # Export the analysis results
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         results_path = export_ai_analysis_results(
             results=analysis_results,
             data_type="unified",
-            file_name=f"unified_analysis_{timestamp}.json"
+            file_name=f"unified_analysis_{timestamp}.json",
         )
-        
+
         console.print(f"\n[green]Analysis results exported to: {results_path}[/green]")
-        
+
     except Exception as e:
         console.print(f"[red]Error during unified AI analysis: {str(e)}[/red]")
 
 
 async def import_data_for_ai_impl(
-    file_path: str,
-    provider: Optional[str] = None
+    file_path: str, provider: Optional[str] = None
 ) -> None:
     """
     Implementation of import and analyze data for AI command.
-    
+
     Args:
         file_path: Path to the exported data file
         provider: AI provider to use ("openai", "anthropic", or "mock")
     """
     try:
-        from ..ai.export import import_data_for_ai_analysis, export_ai_analysis_results
         from ..ai.analyzer import AIAnalyzer
-        
+        from ..ai.export import export_ai_analysis_results, import_data_for_ai_analysis
+
         # Import the data
         with console.status("[bold green]Importing data..."):
             imported_data = import_data_for_ai_analysis(file_path)
             data_type = imported_data["data_type"]
             data = imported_data["data"]
-            
+
         # If provider is not specified, use default from config
         if not provider:
             from ..config import get_config
+
             provider = get_config().get_default_ai_provider()
-            
+
         # Create AI analyzer and analyze the data
-        analyzer = AIAnalyzer(provider=provider)
-        with console.status(f"[bold green]Analyzing {data_type} data using {provider}..."):
+        analyzer = AIAnalyzer(provider=cast(ProviderType, provider))
+        with console.status(
+            f"[bold green]Analyzing {data_type} data using {provider}..."
+        ):
             # Convert data to JSON string
             data_json = json.dumps(data)
-            
+
             # Analyze the data
             analysis_results = await analyzer.analyze_data(data_type, data_json)
-            
+
         # Print the analysis results
         console.print(f"\n[bold blue]AI Analysis Results for {data_type}[/bold blue]")
         analyzer.format_insights_for_display(analysis_results)
-        
+
         # Export the analysis results if requested
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         results_path = export_ai_analysis_results(
             results=analysis_results,
             data_type=data_type,
-            file_name=f"{data_type}_analysis_{timestamp}.json"
+            file_name=f"{data_type}_analysis_{timestamp}.json",
         )
-        
+
         console.print(f"\n[green]Analysis results exported to: {results_path}[/green]")
-        
+
     except Exception as e:
         console.print(f"[red]Error during AI analysis: {str(e)}[/red]")
 

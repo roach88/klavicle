@@ -1,11 +1,16 @@
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import aiohttp
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
+
+# Import AIAnalyzer for enhanced analysis
+from ..ai.analyzer import AIAnalyzer, ProviderType
 
 
 @dataclass
@@ -258,3 +263,212 @@ class FlowAnalyzer:
                     recommendations.append(f"  - {flow}")
 
         return recommendations
+
+    def export_data_for_ai(self, flow_stats: List[FlowStats]) -> str:
+        """
+        Convert flow stats to a JSON format suitable for AI analysis.
+
+        Args:
+            flow_stats: List of FlowStats objects
+
+        Returns:
+            JSON string representation of the data
+        """
+        # Convert FlowStats objects to dictionaries
+        flow_data = []
+        for stat in flow_stats:
+            # Convert to dict and handle datetime objects
+            stat_dict = {
+                "id": stat.id,
+                "name": stat.name,
+                "status": stat.status,
+                "archived": stat.archived,
+                "created": stat.created.isoformat() if stat.created else None,
+                "updated": stat.updated.isoformat() if stat.updated else None,
+                "trigger_type": stat.trigger_type,
+                "structure": {
+                    "action_count": stat.action_count,
+                    "email_count": stat.email_count,
+                    "sms_count": stat.sms_count,
+                    "time_delay_count": stat.time_delay_count,
+                },
+                "tags": stat.tags,
+                "last_activity": stat.last_activity.isoformat()
+                if stat.last_activity
+                else None,
+            }
+            flow_data.append(stat_dict)
+
+        return json.dumps(flow_data)
+
+    async def get_ai_analysis(
+        self,
+        flow_stats: List[FlowStats],
+        ai_analyzer: Optional[AIAnalyzer] = None,
+        provider: ProviderType = "mock",  # Use ProviderType, not str
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get AI-powered analysis of flow data.
+
+        Args:
+            flow_stats: List of FlowStats objects
+            ai_analyzer: Optional AIAnalyzer instance (creates one if not provided)
+            provider: AI provider to use if creating a new analyzer
+            context: Optional additional context or instructions for analysis
+
+        Returns:
+            Dictionary containing AI analysis results
+        """
+        if not ai_analyzer:
+            ai_analyzer = AIAnalyzer(provider=provider)
+
+        data = self.export_data_for_ai(flow_stats)
+        return await ai_analyzer.analyze_data("flows", data, context)
+
+    def print_ai_analysis(self, ai_results: Dict[str, Any]) -> None:
+        """
+        Print AI analysis results to the console using rich formatting.
+
+        Args:
+            ai_results: The results dictionary from get_ai_analysis
+        """
+        if not ai_results:
+            self.console.print("[yellow]No AI analysis results available.[/yellow]")
+            return
+
+        # Check for error
+        if "error" in ai_results:
+            self.console.print(
+                f"[bold red]Error during AI analysis:[/bold red] {ai_results['error']}"
+            )
+            return
+
+        # Print summary in a panel
+        if "summary" in ai_results:
+            summary_panel = Panel(
+                ai_results["summary"],
+                title="[bold blue]AI Flow Analysis Summary[/bold blue]",
+                border_style="blue",
+            )
+            self.console.print(summary_panel)
+
+        # Print key metrics if available
+        if "key_metrics" in ai_results:
+            self.console.print("\n[bold blue]Key Metrics[/bold blue]")
+            metrics_table = Table(show_header=True, header_style="bold magenta")
+            metrics_table.add_column("Metric")
+            metrics_table.add_column("Value")
+
+            for metric, value in ai_results["key_metrics"].items():
+                # Format the value based on what kind of metric it is
+                formatted_value = value
+                if isinstance(value, (int, float)) and value > 1000:
+                    formatted_value = f"{value:,}"
+
+                metrics_table.add_row(
+                    metric.replace("_", " ").title(), str(formatted_value)
+                )
+
+            self.console.print(metrics_table)
+
+        # Print trigger analysis
+        if "trigger_analysis" in ai_results and ai_results["trigger_analysis"]:
+            self.console.print("\n[bold blue]Trigger Analysis[/bold blue]")
+            trigger_table = Table(show_header=True, header_style="bold magenta")
+            trigger_table.add_column("Trigger Type")
+            trigger_table.add_column("Count", justify="right")
+            trigger_table.add_column("Percentage", justify="right")
+            trigger_table.add_column("Effectiveness")
+
+            for trigger in ai_results["trigger_analysis"]:
+                # Format percentage
+                percentage = trigger.get("percentage", 0)
+                if isinstance(percentage, (int, float)):
+                    formatted_percentage = f"{percentage:.1%}"
+                else:
+                    formatted_percentage = str(percentage)
+
+                trigger_table.add_row(
+                    trigger.get("trigger_type", "Unknown"),
+                    str(trigger.get("count", 0)),
+                    formatted_percentage,
+                    trigger.get("effectiveness", ""),
+                )
+
+            self.console.print(trigger_table)
+
+        # Print channel usage
+        if "channel_usage" in ai_results:
+            self.console.print("\n[bold blue]Channel Usage Analysis[/bold blue]")
+            channel_usage = ai_results["channel_usage"]
+            channel_table = Table(show_header=True, header_style="bold magenta")
+            channel_table.add_column("Channel")
+            channel_table.add_column("Count", justify="right")
+            channel_table.add_column("Percentage", justify="right")
+
+            # Email
+            email_count = channel_usage.get("email_count", 0)
+            email_percentage = channel_usage.get("email_percentage", 0)
+            if isinstance(email_percentage, (int, float)):
+                email_percentage = f"{email_percentage:.1%}"
+            channel_table.add_row("Email", str(email_count), str(email_percentage))
+
+            # SMS
+            sms_count = channel_usage.get("sms_count", 0)
+            sms_percentage = channel_usage.get("sms_percentage", 0)
+            if isinstance(sms_percentage, (int, float)):
+                sms_percentage = f"{sms_percentage:.1%}"
+            channel_table.add_row("SMS", str(sms_count), str(sms_percentage))
+
+            self.console.print(channel_table)
+
+            # Channel insights
+            if "insights" in channel_usage:
+                self.console.print(f"\n{channel_usage['insights']}")
+
+        # Print complexity analysis
+        if "complexity_analysis" in ai_results and ai_results["complexity_analysis"]:
+            self.console.print("\n[bold blue]Flow Complexity Analysis[/bold blue]")
+            complexity_table = Table(show_header=True, header_style="bold magenta")
+            complexity_table.add_column("Flow Name")
+            complexity_table.add_column("Steps", justify="right")
+            complexity_table.add_column("Complexity")
+            complexity_table.add_column("Simplification Suggestion")
+
+            for flow in ai_results["complexity_analysis"]:
+                complexity_table.add_row(
+                    flow.get("flow_name", "Unknown"),
+                    str(flow.get("steps", 0)),
+                    flow.get("complexity", "Unknown"),
+                    flow.get("simplification", ""),
+                )
+
+            self.console.print(complexity_table)
+
+        # Print recommendations
+        if (
+            "organization_recommendations" in ai_results
+            and ai_results["organization_recommendations"]
+        ):
+            self.console.print("\n[bold blue]AI Flow Recommendations[/bold blue]")
+            for i, rec in enumerate(ai_results["organization_recommendations"], 1):
+                area = rec.get("area", "General")
+                recommendation = rec.get("recommendation", "No details provided")
+                impact = rec.get("expected_impact", "Unknown")
+
+                self.console.print(
+                    f"{i}. [bold cyan]{area}:[/bold cyan] {recommendation}"
+                )
+                self.console.print(f"   [italic](Expected impact: {impact})[/italic]")
+
+        # Print tag recommendations if available
+        if "tag_recommendations" in ai_results and ai_results["tag_recommendations"]:
+            self.console.print("\n[bold blue]Tag Recommendations[/bold blue]")
+            for i, rec in enumerate(ai_results["tag_recommendations"], 1):
+                current = rec.get("current_state", "")
+                recommendation = rec.get("recommendation", "")
+
+                self.console.print(f"{i}. [bold]Current:[/bold] {current}")
+                self.console.print(f"   [bold]Recommendation:[/bold] {recommendation}")
+                self.console.print("")

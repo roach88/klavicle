@@ -1,8 +1,9 @@
 from typing import Any, Optional, cast
 
 import aiohttp
-from klaviyo_api import KlaviyoAPI
 from rich.console import Console
+
+from klaviyo_api import KlaviyoAPI
 
 console = Console()
 
@@ -397,3 +398,12 @@ class KlaviyoClient:
                     results["errors"].append({"tag": tag["name"], "error": str(e)})
 
         return results
+
+    async def get_campaigns(
+        self, channel: str = "email", page_cursor: Optional[str] = None
+    ) -> dict:
+        """Get all campaigns for a given channel (email, sms, mobile_push) with required filter. Supports pagination via page_cursor."""
+        endpoint = f"campaigns?filter=equals(messages.channel,'{channel}')"
+        if page_cursor:
+            endpoint += f"&page[cursor]={page_cursor}"
+        return await self._make_request(endpoint)

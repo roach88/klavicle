@@ -1,13 +1,17 @@
 """Analyzer for Klaviyo campaigns."""
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-import aiohttp
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
+
+# Import AIAnalyzer for enhanced analysis
+from ..ai.analyzer import AIAnalyzer, ProviderType
 
 
 @dataclass
@@ -93,22 +97,18 @@ class CampaignAnalyzer:
             revenue=metrics.get("revenue", 0.0),
         )
 
-    async def analyze_all_campaigns(self) -> List[CampaignStats]:
-        """Get statistics for all campaigns."""
+    async def analyze_all_campaigns(
+        self, channel: str = "email"
+    ) -> List[CampaignStats]:
+        """Get statistics for all campaigns for a given channel."""
         campaign_stats = []
         next_page = None
 
         with self.console.status("[bold green]Fetching campaigns...") as status:
             while True:
-                # If we have a next_page URL, use it directly
-                if next_page and next_page.startswith("http"):
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(
-                            next_page, headers=self.client._headers
-                        ) as response:
-                            campaigns_response = await response.json()
-                else:
-                    campaigns_response = await self.client._make_request("campaigns")
+                campaigns_response = await self.client.get_campaigns(
+                    channel=channel, page_cursor=next_page
+                )
 
                 if not campaigns_response or "data" not in campaigns_response:
                     break
@@ -167,9 +167,6 @@ class CampaignAnalyzer:
 
         # Print insights
         self.console.print("\n[bold]Campaign Insights:[/bold]")
-
-        # Get current time in UTC
-        now = datetime.now(timezone.utc)
 
         # Calculate performance metrics
         sent_campaigns = [s for s in campaign_stats if s.status == "sent"]
@@ -282,3 +279,174 @@ class CampaignAnalyzer:
                     )
 
         return recommendations
+
+    def export_data_for_ai(self, campaign_stats: List[CampaignStats]) -> str:
+        """
+        Convert campaign stats to a JSON format suitable for AI analysis.
+
+        Args:
+            campaign_stats: List of CampaignStats objects
+
+        Returns:
+            JSON string representation of the data
+        """
+        # Convert CampaignStats objects to dictionaries
+        campaign_data = []
+        for stat in campaign_stats:
+            # Convert to dict and handle datetime objects
+            stat_dict = {
+                "id": stat.id,
+                "name": stat.name,
+                "status": stat.status,
+                "created": stat.created.isoformat() if stat.created else None,
+                "updated": stat.updated.isoformat() if stat.updated else None,
+                "send_time": stat.send_time.isoformat() if stat.send_time else None,
+                "channel": stat.channel,
+                "message_type": stat.message_type,
+                "subject_line": stat.subject_line,
+                "from_email": stat.from_email,
+                "from_name": stat.from_name,
+                "tags": stat.tags,
+                "metrics": {
+                    "recipient_count": stat.recipient_count,
+                    "open_rate": stat.open_rate,
+                    "click_rate": stat.click_rate,
+                    "revenue": stat.revenue,
+                },
+            }
+            campaign_data.append(stat_dict)
+
+        return json.dumps(campaign_data)
+
+    async def get_ai_analysis(
+        self,
+        campaign_stats: List[CampaignStats],
+        ai_analyzer: Optional[AIAnalyzer] = None,
+        provider: ProviderType = "mock",  # Use ProviderType, not str
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get AI-powered analysis of campaign data.
+
+        Args:
+            campaign_stats: List of CampaignStats objects
+            ai_analyzer: Optional AIAnalyzer instance (creates one if not provided)
+            provider: AI provider to use if creating a new analyzer
+            context: Optional additional context or instructions for analysis
+
+        Returns:
+            Dictionary containing AI analysis results
+        """
+        if not ai_analyzer:
+            ai_analyzer = AIAnalyzer(provider=provider)
+
+        data = self.export_data_for_ai(campaign_stats)
+        return await ai_analyzer.analyze_data("campaigns", data, context)
+
+    def print_ai_analysis(self, ai_results: Dict[str, Any]) -> None:
+        """
+        Print AI analysis results to the console using rich formatting.
+
+        Args:
+            ai_results: The results dictionary from get_ai_analysis
+        """
+        if not ai_results:
+            self.console.print("[yellow]No AI analysis results available.[/yellow]")
+            return
+
+        # Check for error
+        if "error" in ai_results:
+            self.console.print(
+                f"[bold red]Error during AI analysis:[/bold red] {ai_results['error']}"
+            )
+            return
+
+        # Print summary in a panel
+        if "summary" in ai_results:
+            summary_panel = Panel(
+                ai_results["summary"],
+                title="[bold blue]AI Analysis Summary[/bold blue]",
+                border_style="blue",
+            )
+            self.console.print(summary_panel)
+
+        # Print key metrics if available
+        if "key_metrics" in ai_results:
+            self.console.print("\n[bold blue]Key Metrics[/bold blue]")
+            metrics_table = Table(show_header=True, header_style="bold magenta")
+            metrics_table.add_column("Metric")
+            metrics_table.add_column("Value")
+
+            for metric, value in ai_results["key_metrics"].items():
+                # Format the value based on what kind of metric it is
+                formatted_value = value
+                if "rate" in metric.lower() and isinstance(value, (int, float)):
+                    formatted_value = f"{value:.1%}"
+                elif "revenue" in metric.lower() and isinstance(value, (int, float)):
+                    formatted_value = f"${value:,.2f}"
+                elif isinstance(value, (int, float)) and value > 1000:
+                    formatted_value = f"{value:,}"
+
+                metrics_table.add_row(
+                    metric.replace("_", " ").title(), str(formatted_value)
+                )
+
+            self.console.print(metrics_table)
+
+        # Print top performing campaigns
+        if "top_performing" in ai_results and ai_results["top_performing"]:
+            self.console.print("\n[bold blue]Top Performing Campaigns[/bold blue]")
+            top_table = Table(show_header=True, header_style="bold magenta")
+            top_table.add_column("Campaign")
+            top_table.add_column("Metric")
+            top_table.add_column("Value")
+            top_table.add_column("Factors")
+
+            for campaign in ai_results["top_performing"]:
+                # Format the value based on the metric type
+                metric = campaign.get("metric", "")
+                value = campaign.get("value", 0)
+                formatted_value = value
+
+                if "rate" in metric.lower() and isinstance(value, (int, float)):
+                    formatted_value = f"{value:.1%}"
+                elif "revenue" in metric.lower() and isinstance(value, (int, float)):
+                    formatted_value = f"${value:,.2f}"
+
+                top_table.add_row(
+                    campaign.get("name", "Unknown"),
+                    metric.replace("_", " ").title(),
+                    str(formatted_value),
+                    ", ".join(campaign.get("reasons", [])),
+                )
+
+            self.console.print(top_table)
+
+        # Print recommendations
+        if "recommendations" in ai_results and ai_results["recommendations"]:
+            self.console.print("\n[bold blue]AI Recommendations[/bold blue]")
+            for i, rec in enumerate(ai_results["recommendations"], 1):
+                area = rec.get("area", "General")
+                recommendation = rec.get("recommendation", "No details provided")
+                impact = rec.get("expected_impact", "Unknown")
+
+                self.console.print(
+                    f"{i}. [bold cyan]{area}:[/bold cyan] {recommendation}"
+                )
+                self.console.print(f"   [italic](Expected impact: {impact})[/italic]")
+
+        # Print experiments
+        if "experiments" in ai_results and ai_results["experiments"]:
+            self.console.print("\n[bold blue]Suggested Experiments[/bold blue]")
+            for i, exp in enumerate(ai_results["experiments"], 1):
+                hypothesis = exp.get("hypothesis", "No hypothesis provided")
+                test_design = exp.get("test_design", "No test design provided")
+                metrics = exp.get("metrics_to_track", [])
+
+                self.console.print(f"{i}. [bold]Hypothesis:[/bold] {hypothesis}")
+                self.console.print(f"   [bold]Test Design:[/bold] {test_design}")
+                if metrics:
+                    self.console.print(
+                        f"   [bold]Metrics to Track:[/bold] {', '.join(metrics)}"
+                    )
+                self.console.print("")
