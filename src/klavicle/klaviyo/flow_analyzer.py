@@ -71,17 +71,28 @@ class FlowAnalyzer:
             if action["attributes"]["action_type"] == "TIME_DELAY"
         )
 
+        # Safely handle datetime parsing with fallbacks
+        try:
+            created = datetime.fromisoformat(
+                flow_data["attributes"]["created"].replace("Z", "+00:00")
+            ) if flow_data["attributes"].get("created") else datetime.now(timezone.utc)
+        except (ValueError, AttributeError, KeyError):
+            created = datetime.now(timezone.utc)
+            
+        try:
+            updated = datetime.fromisoformat(
+                flow_data["attributes"]["updated"].replace("Z", "+00:00")
+            ) if flow_data["attributes"].get("updated") else datetime.now(timezone.utc)
+        except (ValueError, AttributeError, KeyError):
+            updated = datetime.now(timezone.utc)
+            
         return FlowStats(
             id=flow_data["id"],
             name=flow_data["attributes"]["name"],
             status=flow_data["attributes"]["status"],
             archived=flow_data["attributes"]["archived"],
-            created=datetime.fromisoformat(
-                flow_data["attributes"]["created"].replace("Z", "+00:00")
-            ),
-            updated=datetime.fromisoformat(
-                flow_data["attributes"]["updated"].replace("Z", "+00:00")
-            ),
+            created=created,
+            updated=updated,
             trigger_type=flow_data["attributes"]["trigger_type"],
             action_count=len(action_data),
             email_count=email_count,

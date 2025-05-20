@@ -9,6 +9,7 @@ import aiohttp
 from rich.console import Console
 
 from ..config import get_config
+from .mock_analyzer import MockAIAnalyzer
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -104,7 +105,8 @@ class AIAnalyzer:
 
         # Query the AI provider
         try:
-            response = await self._query_ai(prompt)
+            # Pass data_type for better mock responses
+            response = await self._query_ai(prompt, data_type)
             # Parse the response into a structured format
             return self._parse_response(response)
         except Exception as e:
@@ -218,19 +220,41 @@ Return your analysis as a JSON object with the following structure:
 }
 """
 
-    async def _query_ai(self, prompt: str) -> str:
+    async def _query_ai(self, prompt: str, data_type: str = "generic") -> str:
         """
         Send a query to the AI provider and get the response.
 
         Args:
             prompt: The prompt to send to the AI
+            data_type: Type of data being analyzed (used for mock responses)
 
         Returns:
             Raw response text from the AI
         """
         if self.provider == "mock":
-            # Return mock response for testing
-            return self._get_mock_response()
+            # Extract data from the prompt for better mock responses
+            data_json = None
+
+            # Try to extract the data from the prompt
+            try:
+                # Look for JSON data in the prompt
+                if "```json" in prompt:
+                    data_parts = prompt.split("```json")
+                    if len(data_parts) > 1:
+                        json_text = data_parts[1].split("```")[0]
+                        data_json = json_text.strip()
+            except Exception:
+                # If extraction fails, proceed without data
+                pass
+
+            # Return enhanced mock response for testing
+            parsed_data = None
+            if data_json is not None:
+                try:
+                    parsed_data = json.loads(data_json)
+                except Exception:
+                    parsed_data = None
+            return self._get_mock_response(data_type, parsed_data)
 
         headers = self._get_provider_headers()
         data = self._get_provider_payload(prompt)
@@ -327,20 +351,37 @@ Return your analysis as a JSON object with the following structure:
                     "raw_response": response_text,
                 }
 
-    def _get_mock_response(self) -> str:
-        """Return a mock response for testing without API calls."""
-        return """
-{
-  "summary": "This is a mock AI analysis for testing purposes.",
-  "key_insights": [
-    {"insight": "Mock insight 1", "evidence": "Mock evidence", "impact": "High"},
-    {"insight": "Mock insight 2", "evidence": "Mock evidence", "impact": "Medium"}
-  ],
-  "recommendations": [
-    {"area": "Testing", "recommendation": "This is a test recommendation", "expected_impact": "Low"}
-  ]
-}
-"""
+    def _get_mock_response(
+        self, data_type: str = "generic", data: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Return an enhanced mock response for testing without API calls.
+
+        Args:
+            data_type: Type of data being analyzed
+            data: Optional data to use for generating more realistic mock responses
+
+        Returns:
+            Mock analysis results as a JSON string
+        """
+        # Create a mock analyzer instance
+        mock_analyzer = MockAIAnalyzer()
+
+        # Parse data from string if needed
+        parsed_data = None
+        if data is not None and isinstance(data, str):
+            try:
+                parsed_data = json.loads(data)
+            except json.JSONDecodeError:
+                pass
+        else:
+            parsed_data = data
+
+        # Get appropriate mock response
+        mock_response = mock_analyzer.get_mock_response(data_type, parsed_data)
+
+        # Convert to JSON string
+        return json.dumps(mock_response, indent=2)
 
     def format_insights_for_display(self, insights: Dict[str, Any]) -> None:
         """
@@ -366,7 +407,7 @@ Return your analysis as a JSON object with the following structure:
             for metric, value in insights["key_metrics"].items():
                 self.console.print(f"• {metric.replace('_', ' ').title()}: {value}")
 
-        # Print recommendations
+        # Print recommendations (higher priority display)
         if "recommendations" in insights:
             self.console.print("\n[bold blue]Recommendations[/bold blue]")
             for i, rec in enumerate(insights["recommendations"], 1):
@@ -377,30 +418,184 @@ Return your analysis as a JSON object with the following structure:
                     f"{i}. [bold]{area}:[/bold] {recommendation} [italic]({impact} impact)[/italic]"
                 )
 
+        # Handle account health section for unified analysis
+        if "account_health" in insights:
+            self.console.print("\n[bold blue]Account Health[/bold blue]")
+            score = insights["account_health"].get("score", "N/A")
+            self.console.print(f"• Overall Score: {score}/10")
+
+            # Print strengths
+            if (
+                "strengths" in insights["account_health"]
+                and insights["account_health"]["strengths"]
+            ):
+                self.console.print("• [bold]Strengths:[/bold]")
+                for item in insights["account_health"]["strengths"]:
+                    self.console.print(f"  - {item}")
+
+            # Print areas for improvement
+            if (
+                "areas_for_improvement" in insights["account_health"]
+                and insights["account_health"]["areas_for_improvement"]
+            ):
+                self.console.print("• [bold]Areas for Improvement:[/bold]")
+                for item in insights["account_health"]["areas_for_improvement"]:
+                    self.console.print(f"  - {item}")
+
+            # Print critical issues
+            if (
+                "critical_issues" in insights["account_health"]
+                and insights["account_health"]["critical_issues"]
+            ):
+                self.console.print("• [bold]Critical Issues:[/bold]")
+                for item in insights["account_health"]["critical_issues"]:
+                    self.console.print(f"  - {item}")
+
+        # Handle strategic recommendations for unified analysis
+        if "strategic_recommendations" in insights:
+            self.console.print("\n[bold blue]Strategic Recommendations[/bold blue]")
+            for i, rec in enumerate(insights["strategic_recommendations"], 1):
+                area = rec.get("area", "General")
+                current = rec.get("current_state", "")
+                target = rec.get("target_state", "")
+                priority = rec.get("priority", "Medium")
+
+                self.console.print(
+                    f"{i}. [bold]{area}[/bold] ([italic]{priority} priority[/italic])"
+                )
+                if current:
+                    self.console.print(f"   Current: {current}")
+                if target:
+                    self.console.print(f"   Target: {target}")
+
+                # Print steps
+                if "steps" in rec and rec["steps"]:
+                    self.console.print("   Steps:")
+                    for step in rec["steps"]:
+                        self.console.print(f"   - {step}")
+
         # Print other sections based on their presence
         for section_name, section_title in [
             ("key_insights", "Key Insights"),
+            ("top_performing", "Top Performing Campaigns"),
+            ("underperforming", "Underperforming Campaigns"),
             ("trends", "Trends"),
+            ("subject_line_insights", "Subject Line Insights"),
+            ("timing_insights", "Timing Insights"),
+            ("trigger_analysis", "Trigger Analysis"),
+            ("channel_usage", "Channel Usage"),
+            ("complexity_analysis", "Flow Complexity Analysis"),
+            ("staleness", "Content Staleness"),
+            ("size_distribution", "List Size Distribution"),
+            ("type_analysis", "List Type Analysis"),
+            ("freshness_analysis", "List Freshness Analysis"),
+            ("segmentation_strategy", "Segmentation Strategy"),
+            ("organization_recommendations", "Organization Recommendations"),
+            ("tag_analysis", "Tag Analysis"),
+            ("customer_journey", "Customer Journey Mapping"),
+            ("cross_entity_correlations", "Cross-Entity Correlations"),
             ("experiments", "Suggested Experiments"),
             ("tag_recommendations", "Tag Recommendations"),
+            ("resource_allocation", "Resource Allocation"),
         ]:
             if section_name in insights and insights[section_name]:
                 self.console.print(f"\n[bold blue]{section_title}[/bold blue]")
-                for i, item in enumerate(insights[section_name], 1):
-                    if isinstance(item, dict):
-                        # Get the first key-value pair to use as the main point
-                        key, value = next(iter(item.items()))
-                        self.console.print(f"• [bold]{value}[/bold]")
-                        # Print the rest of the details indented
-                        for k, v in item.items():
-                            if k != key:
-                                if isinstance(v, list):
-                                    self.console.print(
-                                        f"  - {k.replace('_', ' ').title()}: {', '.join(v)}"
-                                    )
-                                else:
-                                    self.console.print(
-                                        f"  - {k.replace('_', ' ').title()}: {v}"
-                                    )
-                    else:
-                        self.console.print(f"• {item}")
+
+                # Handle section-specific formatting
+                if section_name == "channel_usage" and isinstance(
+                    insights[section_name], dict
+                ):
+                    # Special handling for channel_usage which is a dict, not a list
+                    channel_data = insights[section_name]
+                    for k, v in channel_data.items():
+                        if k != "insights":  # Handle insights separately
+                            self.console.print(f"• {k.replace('_', ' ').title()}: {v}")
+                    if "insights" in channel_data:
+                        self.console.print(
+                            f"\n• [bold]Insights:[/bold] {channel_data['insights']}"
+                        )
+                elif section_name == "resource_allocation" and isinstance(
+                    insights[section_name], dict
+                ):
+                    # Special handling for resource_allocation
+                    resource_data = insights[section_name]
+                    if "current_allocation" in resource_data:
+                        self.console.print(
+                            f"• [bold]Current Allocation:[/bold] {resource_data['current_allocation']}"
+                        )
+                    if (
+                        "recommended_shifts" in resource_data
+                        and resource_data["recommended_shifts"]
+                    ):
+                        self.console.print("• [bold]Recommended Shifts:[/bold]")
+                        for shift in resource_data["recommended_shifts"]:
+                            self.console.print(f"  - {shift}")
+                    if "expected_roi" in resource_data:
+                        self.console.print(
+                            f"• [bold]Expected ROI:[/bold] {resource_data['expected_roi']}"
+                        )
+                elif section_name == "size_distribution" and isinstance(
+                    insights[section_name], dict
+                ):
+                    # Special handling for size_distribution
+                    size_data = insights[section_name]
+                    for k, v in size_data.items():
+                        if k != "insights":  # Handle insights separately
+                            self.console.print(f"• {k.replace('_', ' ').title()}: {v}")
+                    if "insights" in size_data:
+                        self.console.print(
+                            f"\n• [bold]Insights:[/bold] {size_data['insights']}"
+                        )
+                elif section_name == "type_analysis" and isinstance(
+                    insights[section_name], dict
+                ):
+                    # Special handling for type_analysis
+                    type_data = insights[section_name]
+                    for k, v in type_data.items():
+                        if k != "recommendations":  # Handle recommendations separately
+                            self.console.print(f"• {k.replace('_', ' ').title()}: {v}")
+                    if "recommendations" in type_data:
+                        self.console.print(
+                            f"\n• [bold]Recommendations:[/bold] {type_data['recommendations']}"
+                        )
+                else:
+                    # Standard handling for list-type sections
+                    for i, item in enumerate(insights[section_name], 1):
+                        if isinstance(item, dict):
+                            # Get a key to use as the main point (prioritizing certain keys)
+                            main_key = None
+                            for priority_key in [
+                                "area",
+                                "insight",
+                                "trend",
+                                "pattern",
+                                "name",
+                                "flow_name",
+                                "list_name",
+                                "trigger_type",
+                                "journey_segment",
+                            ]:
+                                if priority_key in item:
+                                    main_key = priority_key
+                                    break
+
+                            if main_key is None:
+                                # Get the first key if no priority key found
+                                main_key = next(iter(item))
+
+                            main_value = item.get(main_key)
+                            self.console.print(f"• [bold]{main_value}[/bold]")
+
+                            # Print the rest of the details indented
+                            for k, v in item.items():
+                                if k != main_key:
+                                    if isinstance(v, list):
+                                        self.console.print(
+                                            f"  - {k.replace('_', ' ').title()}: {', '.join(str(x) for x in v)}"
+                                        )
+                                    else:
+                                        self.console.print(
+                                            f"  - {k.replace('_', ' ').title()}: {v}"
+                                        )
+                        else:
+                            self.console.print(f"• {item}")

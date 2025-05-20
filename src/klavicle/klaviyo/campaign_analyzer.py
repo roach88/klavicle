@@ -74,16 +74,27 @@ class CampaignAnalyzer:
                 attributes["send_time"].replace("Z", "+00:00")
             )
 
+        # Safely handle datetime parsing with fallbacks
+        try:
+            created = datetime.fromisoformat(
+                attributes["created"].replace("Z", "+00:00")
+            ) if attributes.get("created") else datetime.now(timezone.utc)
+        except (ValueError, AttributeError, KeyError):
+            created = datetime.now(timezone.utc)
+            
+        try:
+            updated = datetime.fromisoformat(
+                attributes["updated"].replace("Z", "+00:00")
+            ) if attributes.get("updated") else datetime.now(timezone.utc)
+        except (ValueError, AttributeError, KeyError):
+            updated = datetime.now(timezone.utc)
+            
         return CampaignStats(
             id=campaign_data["id"],
             name=attributes["name"],
             status=attributes["status"],
-            created=datetime.fromisoformat(
-                attributes["created"].replace("Z", "+00:00")
-            ),
-            updated=datetime.fromisoformat(
-                attributes["updated"].replace("Z", "+00:00")
-            ),
+            created=created,
+            updated=updated,
             send_time=send_time,
             channel=attributes.get("channel", "unknown"),
             message_type=attributes.get("message_type", "unknown"),

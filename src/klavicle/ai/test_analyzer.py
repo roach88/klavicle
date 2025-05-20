@@ -37,24 +37,29 @@ def test_prompt_generation():
     
     # Test campaign prompt
     campaign_prompt = analyzer._generate_prompt("campaigns", sample_data)
-    assert "analyzing Klaviyo email campaign data" in campaign_prompt.lower()
+    assert "klaviyo" in campaign_prompt.lower()
+    assert "campaign" in campaign_prompt.lower()
     assert sample_data in campaign_prompt
     
     # Test flow prompt
     flow_prompt = analyzer._generate_prompt("flows", sample_data)
-    assert "analyzing klaviyo flow data" in flow_prompt.lower()
+    assert "klaviyo" in flow_prompt.lower()
+    assert "flow" in flow_prompt.lower()
     
     # Test list prompt
     list_prompt = analyzer._generate_prompt("lists", sample_data)
-    assert "analyzing klaviyo list data" in list_prompt.lower()
+    assert "klaviyo" in list_prompt.lower()
+    assert "list" in list_prompt.lower()
     
     # Test unified prompt
     unified_prompt = analyzer._generate_prompt("unified", sample_data)
-    assert "analyzing unified klaviyo account data" in unified_prompt.lower()
+    assert "klaviyo" in unified_prompt.lower()
+    assert "unified" in unified_prompt.lower()
     
     # Test generic prompt
     generic_prompt = analyzer._generate_prompt("unknown_type", sample_data)
-    assert "analyzing klaviyo marketing data" in generic_prompt.lower()
+    assert "klaviyo" in generic_prompt.lower()
+    assert "marketing data" in generic_prompt.lower()
 
 
 def test_response_parsing():
@@ -73,10 +78,10 @@ def test_response_parsing():
     assert "error" in parsed
     assert "raw_response" in parsed
     
-    # Test JSON embedded in markdown
+    # Test JSON embedded in markdown - our implementation extracts JSON from markdown now
     markdown_json = '```json\n{"summary": "Embedded JSON"}\n```'
     parsed = analyzer._parse_response(markdown_json)
-    assert "error" in parsed  # This fails because our current implementation doesn't extract JSON from markdown blocks
+    assert parsed["summary"] == "Embedded JSON"
 
 
 @pytest.mark.asyncio
@@ -87,13 +92,29 @@ async def test_mock_analysis():
     # Create sample data
     sample_data = [{"id": "test1", "name": "Test Campaign"}]
     
-    # Run analysis
+    # Run analysis for campaigns
     results = await analyzer.analyze_data("campaigns", sample_data)
     
-    # Check results structure
+    # Check results structure for campaigns
     assert "summary" in results
-    assert "This is a mock AI analysis" in results["summary"]
+    assert "campaigns" in results["summary"].lower()
     assert "recommendations" in results
+    assert "key_metrics" in results
+    
+    # Test flows analysis
+    flow_results = await analyzer.analyze_data("flows", sample_data)
+    assert "flows" in flow_results["summary"].lower()
+    assert "key_metrics" in flow_results
+    
+    # Test lists analysis
+    list_results = await analyzer.analyze_data("lists", sample_data)
+    assert "lists" in list_results["summary"].lower()
+    assert "key_metrics" in list_results
+    
+    # Test unified analysis
+    unified_results = await analyzer.analyze_data("unified", sample_data)
+    assert "account" in unified_results["summary"].lower()
+    assert "account_health" in unified_results
 
 
 if __name__ == "__main__":

@@ -51,15 +51,26 @@ class ListAnalyzer:
         profiles = await self.client._make_request(f"lists/{list_id}/profiles")
         profile_count = profiles.get("meta", {}).get("total", 0)
 
+        # Safely handle datetime parsing with fallbacks
+        try:
+            created = datetime.fromisoformat(
+                list_data["attributes"]["created"].replace("Z", "+00:00")
+            ) if list_data["attributes"].get("created") else datetime.now(timezone.utc)
+        except (ValueError, AttributeError, KeyError):
+            created = datetime.now(timezone.utc)
+            
+        try:
+            updated = datetime.fromisoformat(
+                list_data["attributes"]["updated"].replace("Z", "+00:00")
+            ) if list_data["attributes"].get("updated") else datetime.now(timezone.utc)
+        except (ValueError, AttributeError, KeyError):
+            updated = datetime.now(timezone.utc)
+        
         return ListStats(
             id=list_data["id"],
             name=list_data["attributes"]["name"],
-            created=datetime.fromisoformat(
-                list_data["attributes"]["created"].replace("Z", "+00:00")
-            ),
-            updated=datetime.fromisoformat(
-                list_data["attributes"]["updated"].replace("Z", "+00:00")
-            ),
+            created=created,
+            updated=updated,
             profile_count=profile_count,
             tags=tag_names,
             is_dynamic=list_data["attributes"].get("is_dynamic", False),

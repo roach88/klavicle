@@ -2,13 +2,14 @@
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 from rich.console import Console
 from rich.panel import Panel
 
-from ..ai.analyzer import AIAnalyzer
+from ..ai.analyzer import AIAnalyzer, ProviderType
 from ..ai.export import (
     export_ai_analysis_results,
     export_data_for_ai_analysis,
@@ -16,6 +17,10 @@ from ..ai.export import (
     import_data_for_ai_analysis,
 )
 from ..config import get_config
+from ..klaviyo.campaign_analyzer import CampaignAnalyzer
+from ..klaviyo.client import KlaviyoClient
+from ..klaviyo.flow_analyzer import FlowAnalyzer
+from ..klaviyo.list_analyzer import ListAnalyzer
 
 console = Console()
 
@@ -193,3 +198,239 @@ def initialize_exports_dir_impl(dir_path: Optional[str] = None) -> None:
         console.print(f"[green]Exports directory initialized at:[/green] {dir_path}")
     except Exception as e:
         console.print(f"[red]Error initializing exports directory:[/red] {str(e)}")
+
+
+def get_klaviyo_client() -> KlaviyoClient:
+    """Create and return a KlaviyoClient instance."""
+    from .klaviyo_commands import get_klaviyo_client
+
+    return get_klaviyo_client()
+
+
+async def analyze_impl(
+    entity_type: str = "all",
+    provider: str = "mock",
+    export_format: Optional[str] = None,
+    sample: bool = False,
+) -> None:
+    """
+    Implementation of the simplified AI analyze command that provides AI-powered insights.
+
+    Args:
+        entity_type: Type of entities to analyze ("campaigns", "flows", "lists", or "all")
+        provider: AI provider to use ("openai", "anthropic", or "mock")
+        export_format: Optional format to export results ("json" or "csv")
+        sample: If True, use a sample of data for faster processing
+    """
+    # Create a client and analyzers
+    client = get_klaviyo_client()
+
+    try:
+        # Validate provider choice
+        if provider not in ["openai", "anthropic", "mock"]:
+            console.print(
+                f"[yellow]Warning: Unknown provider '{provider}', using 'mock' instead[/yellow]"
+            )
+            provider = "mock"
+
+        # Create unified data structure to hold all entity data
+        unified_data = {}
+
+        # Determine which entities to analyze
+        analyze_campaigns = entity_type in ["campaigns", "all"]
+        analyze_flows = entity_type in ["flows", "all"]
+        analyze_lists = entity_type in ["lists", "all"]
+
+        # Fetch data for each entity type
+        if analyze_campaigns:
+            campaign_analyzer = CampaignAnalyzer(client)
+            with console.status("[bold green]Fetching campaigns data..."):
+                campaign_stats = await campaign_analyzer.analyze_all_campaigns()
+                campaign_data = [
+                    {
+                        "id": stat.id,
+                        "name": stat.name,
+                        "status": stat.status,
+                        "created": stat.created.isoformat() if stat.created else None,
+                        "updated": stat.updated.isoformat() if stat.updated else None,
+                        "send_time": stat.send_time.isoformat()
+                        if stat.send_time
+                        else None,
+                        "channel": stat.channel,
+                        "message_type": stat.message_type,
+                        "subject_line": stat.subject_line,
+                        "from_email": stat.from_email,
+                        "from_name": stat.from_name,
+                        "tags": stat.tags,
+                        "metrics": {
+                            "recipient_count": stat.recipient_count,
+                            "open_rate": stat.open_rate,
+                            "click_rate": stat.click_rate,
+                            "revenue": stat.revenue,
+                        },
+                    }
+                    for stat in campaign_stats
+                ]
+                unified_data["campaigns"] = campaign_data
+
+                # If sample mode, limit to a smaller dataset
+                if sample:
+                    sample_size = 3
+                    unified_data["campaigns"] = unified_data["campaigns"][:sample_size]
+                    console.print(
+                        f"[yellow]Using sample of {sample_size} campaigns for analysis[/yellow]"
+                    )
+
+        if analyze_flows:
+            flow_analyzer = FlowAnalyzer(client)
+            with console.status("[bold green]Fetching flows data..."):
+                flow_stats = await flow_analyzer.analyze_all_flows()
+                flow_data = [
+                    {
+                        "id": stat.id,
+                        "name": stat.name,
+                        "status": stat.status,
+                        "archived": stat.archived,
+                        "created": stat.created.isoformat() if stat.created else None,
+                        "updated": stat.updated.isoformat() if stat.updated else None,
+                        "trigger_type": stat.trigger_type,
+                        "structure": {
+                            "action_count": stat.action_count,
+                            "email_count": stat.email_count,
+                            "sms_count": stat.sms_count,
+                            "time_delay_count": stat.time_delay_count,
+                        },
+                        "tags": stat.tags,
+                    }
+                    for stat in flow_stats
+                ]
+                unified_data["flows"] = flow_data
+
+                # If sample mode, limit to a smaller dataset
+                if sample:
+                    sample_size = 3
+                    unified_data["flows"] = unified_data["flows"][:sample_size]
+                    console.print(
+                        f"[yellow]Using sample of {sample_size} flows for analysis[/yellow]"
+                    )
+
+        if analyze_lists:
+            list_analyzer = ListAnalyzer(client)
+            with console.status("[bold green]Fetching lists data..."):
+                list_stats = await list_analyzer.analyze_all_lists()
+                list_data = [
+                    {
+                        "id": stat.id,
+                        "name": stat.name,
+                        "created": stat.created.isoformat() if stat.created else None,
+                        "updated": stat.updated.isoformat() if stat.updated else None,
+                        "profile_count": stat.profile_count,
+                        "is_dynamic": stat.is_dynamic,
+                        "folder_name": stat.folder_name,
+                        "tags": stat.tags,
+                    }
+                    for stat in list_stats
+                ]
+                unified_data["lists"] = list_data
+
+                # If sample mode, limit to a smaller dataset
+                if sample:
+                    sample_size = 3
+                    unified_data["lists"] = unified_data["lists"][:sample_size]
+                    console.print(
+                        f"[yellow]Using sample of {sample_size} lists for analysis[/yellow]"
+                    )
+
+        # Create AI analyzer
+        ai_analyzer = AIAnalyzer(provider=cast(ProviderType, provider))
+
+        # Analyze the data
+        if entity_type == "all":
+            # Unified analysis of all entity types
+            with console.status(
+                f"[bold green]Performing unified AI analysis using {provider}..."
+            ):
+                # Use our enhanced mock functionality if using the mock provider
+                if provider == "mock":
+                    data_json = json.dumps(unified_data)
+                    analysis_results = await ai_analyzer.analyze_data(
+                        "unified", data_json
+                    )
+                else:
+                    # Use regular API providers
+                    data_json = json.dumps(unified_data)
+                    analysis_results = await ai_analyzer.analyze_data(
+                        "unified", data_json
+                    )
+
+            # Print the unified analysis results
+            console.print("\n[bold blue]Unified AI Analysis Results[/bold blue]")
+
+            # Print summary in a panel if available
+            if "summary" in analysis_results:
+                summary_panel = Panel(
+                    analysis_results["summary"],
+                    title="[bold blue]AI Analysis Summary[/bold blue]",
+                    border_style="blue",
+                )
+                console.print(summary_panel)
+
+            # Display the insights
+            ai_analyzer.format_insights_for_display(analysis_results)
+
+        else:
+            # Individual entity analysis
+            with console.status(
+                f"[bold green]Analyzing {entity_type} using {provider}..."
+            ):
+                # Use our enhanced mock functionality if using the mock provider
+                if provider == "mock":
+                    data_json = json.dumps(unified_data.get(entity_type, []))
+                    analysis_results = await ai_analyzer.analyze_data(
+                        entity_type, data_json
+                    )
+                else:
+                    # Use regular API providers
+                    data_json = json.dumps(unified_data.get(entity_type, []))
+                    analysis_results = await ai_analyzer.analyze_data(
+                        entity_type, data_json
+                    )
+
+            # Print the analysis results
+            console.print(
+                f"\n[bold blue]AI Analysis Results for {entity_type}[/bold blue]"
+            )
+
+            # Print specific entity analysis
+            if entity_type == "campaigns" and campaign_analyzer:
+                campaign_analyzer.print_ai_analysis(analysis_results)
+            elif entity_type == "flows" and flow_analyzer:
+                flow_analyzer.print_ai_analysis(analysis_results)
+            elif entity_type == "lists" and list_analyzer:
+                list_analyzer.print_ai_analysis(analysis_results)
+            else:
+                # Generic display for any entity type
+                ai_analyzer.format_insights_for_display(analysis_results)
+
+        # Export the analysis results if requested
+        if export_format:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{entity_type}_analysis_{timestamp}.{export_format}"
+
+            if export_format == "json":
+                with open(filename, "w") as f:
+                    json.dump(analysis_results, f, indent=2)
+
+            elif export_format == "csv":
+                console.print(
+                    "[yellow]CSV export not implemented for AI analysis results[/yellow]"
+                )
+                return
+
+            console.print(f"\n[green]Analysis results exported to: {filename}[/green]")
+
+    except Exception as e:
+        console.print(f"[red]Error during AI analysis: {str(e)}[/red]")
+        import traceback
+
+        console.print(traceback.format_exc())

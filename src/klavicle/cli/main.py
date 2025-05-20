@@ -2,6 +2,7 @@ import click
 from rich.console import Console
 from rich.panel import Panel
 
+from .ai_commands import analyze_impl
 from .config_commands import (
     export_config_impl,
     get_config_impl,
@@ -383,10 +384,59 @@ def import_for_ai(file_path: str, provider: str):
     type=click.Choice(["openai", "anthropic", "mock"]),
     help="AI provider to use for analysis (requires API key)",
 )
-def unified_analysis(provider: str):
+@click.option(
+    "--sample", 
+    is_flag=True,
+    help="Use a smaller dataset sample for faster testing",
+)
+def unified_analysis(provider: str, sample: bool):
     """Run unified AI analysis across all entities (campaigns, flows, lists)."""
     run_async(unified_ai_analysis_impl(
-        provider=provider
+        provider=provider,
+        use_sample=sample
+    ))
+
+
+@ai.command("analyze")
+@click.option(
+    "--entity-type",
+    type=click.Choice(["campaigns", "flows", "lists", "all"]), 
+    default="all",
+    help="Type of entities to analyze",
+)
+@click.option(
+    "--provider",
+    type=click.Choice(["openai", "anthropic", "mock"]),
+    default="mock",
+    help="AI provider to use for analysis (requires API key)",
+)
+@click.option(
+    "--export",
+    type=click.Choice(["json", "csv"]),
+    help="Export format for analysis results",
+)
+@click.option(
+    "--sample", 
+    is_flag=True,
+    help="Use a smaller dataset sample for faster testing",
+)
+def analyze(entity_type: str, provider: str, export: str, sample: bool):
+    """
+    Run AI analysis on specified entities with a simplified approach.
+    
+    This command provides a more streamlined way to analyze your Klaviyo data using AI.
+    It can analyze campaigns, flows, lists, or all entities at once.
+    
+    Examples:
+        klavicle ai analyze --entity-type=campaigns
+        klavicle ai analyze --provider=anthropic
+        klavicle ai analyze --entity-type=flows --export=json --sample
+    """
+    run_async(analyze_impl(
+        entity_type=entity_type,
+        provider=provider,
+        export_format=export,
+        sample=sample
     ))
 
 
