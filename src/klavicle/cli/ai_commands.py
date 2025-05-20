@@ -16,6 +16,7 @@ from ..ai.export import (
     import_ai_analysis_results,
     import_data_for_ai_analysis,
 )
+from ..ai.tag_analyzer import TagAnalyzer
 from ..config import get_config
 from ..klaviyo.campaign_analyzer import CampaignAnalyzer
 from ..klaviyo.client import KlaviyoClient
@@ -212,34 +213,51 @@ async def analyze_impl(
     provider: str = "mock",
     export_format: Optional[str] = None,
     sample: bool = False,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    batch_size: Optional[int] = None,
+    max_tokens: Optional[int] = None,
 ) -> None:
     """
-    Implementation of the simplified AI analyze command that provides AI-powered insights.
+    Implementation of analyze command.
 
     Args:
-        entity_type: Type of entities to analyze ("campaigns", "flows", "lists", or "all")
+        entity_type: Type of entity to analyze ("campaigns", "flows", "lists", "tags", or "all")
         provider: AI provider to use ("openai", "anthropic", or "mock")
-        export_format: Optional format to export results ("json" or "csv")
-        sample: If True, use a sample of data for faster processing
+        export_format: Optional format to export results in
+        sample: Whether to use a sample of the data
+        start_date: Optional start date for filtering (YYYY-MM-DD)
+        end_date: Optional end date for filtering (YYYY-MM-DD)
+        batch_size: Optional batch size for processing large datasets
+        max_tokens: Optional maximum tokens per request
     """
-    # Create a client and analyzers
-    client = get_klaviyo_client()
-
     try:
-        # Validate provider choice
-        if provider not in ["openai", "anthropic", "mock"]:
-            console.print(
-                f"[yellow]Warning: Unknown provider '{provider}', using 'mock' instead[/yellow]"
-            )
-            provider = "mock"
+        # Parse dates if provided
+        parsed_start_date = None
+        parsed_end_date = None
+        if start_date:
+            try:
+                parsed_start_date = datetime.fromisoformat(start_date)
+            except ValueError:
+                console.print("[red]Invalid start date format. Use YYYY-MM-DD.[/red]")
+                return
+        if end_date:
+            try:
+                parsed_end_date = datetime.fromisoformat(end_date)
+            except ValueError:
+                console.print("[red]Invalid end date format. Use YYYY-MM-DD.[/red]")
+                return
 
-        # Create unified data structure to hold all entity data
+        # Initialize Klaviyo client
+        client = get_klaviyo_client()
+
+        # Determine which entity types to analyze
+        analyze_campaigns = entity_type in ["campaigns", "all", "tags"]
+        analyze_flows = entity_type in ["flows", "all", "tags"]
+        analyze_lists = entity_type in ["lists", "all", "tags"]
+
+        # Initialize unified data structure
         unified_data = {}
-
-        # Determine which entities to analyze
-        analyze_campaigns = entity_type in ["campaigns", "all"]
-        analyze_flows = entity_type in ["flows", "all"]
-        analyze_lists = entity_type in ["lists", "all"]
 
         # Fetch data for each entity type
         if analyze_campaigns:
@@ -272,8 +290,6 @@ async def analyze_impl(
                     for stat in campaign_stats
                 ]
                 unified_data["campaigns"] = campaign_data
-
-                # If sample mode, limit to a smaller dataset
                 if sample:
                     sample_size = 3
                     unified_data["campaigns"] = unified_data["campaigns"][:sample_size]
@@ -305,8 +321,6 @@ async def analyze_impl(
                     for stat in flow_stats
                 ]
                 unified_data["flows"] = flow_data
-
-                # If sample mode, limit to a smaller dataset
                 if sample:
                     sample_size = 3
                     unified_data["flows"] = unified_data["flows"][:sample_size]
@@ -332,8 +346,6 @@ async def analyze_impl(
                     for stat in list_stats
                 ]
                 unified_data["lists"] = list_data
-
-                # If sample mode, limit to a smaller dataset
                 if sample:
                     sample_size = 3
                     unified_data["lists"] = unified_data["lists"][:sample_size]
@@ -341,8 +353,34 @@ async def analyze_impl(
                         f"[yellow]Using sample of {sample_size} lists for analysis[/yellow]"
                     )
 
-        # Create AI analyzer
-        ai_analyzer = AIAnalyzer(provider=cast(ProviderType, provider))
+        # Tag analysis as a standalone entity
+        if entity_type == "tags":
+            tag_analyzer = TagAnalyzer()
+            tag_map = tag_analyzer.aggregate_tags(
+                campaigns=unified_data.get("campaigns"),
+                flows=unified_data.get("flows"),
+                lists_=unified_data.get("lists"),
+            )
+            report = tag_analyzer.summary_report(tag_map)
+            tag_analyzer.print_tag_analysis(report)
+            # Optionally export results
+            if export_format == "json":
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                export_path = f"tags_analysis_{timestamp}.json"
+                with open(export_path, "w") as f:
+                    json.dump(report, f, indent=2)
+                console.print(
+                    f"\n[green]Tag analysis exported to {export_path}[/green]"
+                )
+            return
+
+        # Create AI analyzer with custom batch size and max tokens if provided
+        provider_type: ProviderType = cast(ProviderType, provider)
+        ai_analyzer = AIAnalyzer(  # type: ignore
+            provider=provider_type,
+            batch_size=batch_size if batch_size is not None else 1000,
+            max_tokens=max_tokens if max_tokens is not None else 100000,
+        )
 
         # Analyze the data
         if entity_type == "all":
@@ -354,13 +392,19 @@ async def analyze_impl(
                 if provider == "mock":
                     data_json = json.dumps(unified_data)
                     analysis_results = await ai_analyzer.analyze_data(
-                        "unified", data_json
+                        "unified",
+                        data_json,
+                        start_date=parsed_start_date,
+                        end_date=parsed_end_date,
                     )
                 else:
                     # Use regular API providers
                     data_json = json.dumps(unified_data)
                     analysis_results = await ai_analyzer.analyze_data(
-                        "unified", data_json
+                        "unified",
+                        data_json,
+                        start_date=parsed_start_date,
+                        end_date=parsed_end_date,
                     )
 
             # Print the unified analysis results
@@ -387,13 +431,19 @@ async def analyze_impl(
                 if provider == "mock":
                     data_json = json.dumps(unified_data.get(entity_type, []))
                     analysis_results = await ai_analyzer.analyze_data(
-                        entity_type, data_json
+                        entity_type,
+                        data_json,
+                        start_date=parsed_start_date,
+                        end_date=parsed_end_date,
                     )
                 else:
                     # Use regular API providers
                     data_json = json.dumps(unified_data.get(entity_type, []))
                     analysis_results = await ai_analyzer.analyze_data(
-                        entity_type, data_json
+                        entity_type,
+                        data_json,
+                        start_date=parsed_start_date,
+                        end_date=parsed_end_date,
                     )
 
             # Print the analysis results
@@ -412,25 +462,18 @@ async def analyze_impl(
                 # Generic display for any entity type
                 ai_analyzer.format_insights_for_display(analysis_results)
 
-        # Export the analysis results if requested
+        # Export results if requested
         if export_format:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{entity_type}_analysis_{timestamp}.{export_format}"
-
             if export_format == "json":
-                with open(filename, "w") as f:
+                export_path = f"{entity_type}_analysis_{timestamp}.json"
+                with open(export_path, "w") as f:
                     json.dump(analysis_results, f, indent=2)
-
-            elif export_format == "csv":
+                console.print(f"\n[green]Analysis exported to {export_path}[/green]")
+            else:
                 console.print(
-                    "[yellow]CSV export not implemented for AI analysis results[/yellow]"
+                    f"[yellow]Unsupported export format: {export_format}[/yellow]"
                 )
-                return
-
-            console.print(f"\n[green]Analysis results exported to: {filename}[/green]")
 
     except Exception as e:
-        console.print(f"[red]Error during AI analysis: {str(e)}[/red]")
-        import traceback
-
-        console.print(traceback.format_exc())
+        console.print(f"[red]Error during analysis:[/red] {str(e)}")

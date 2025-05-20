@@ -13,11 +13,13 @@ Klavicle streamlines your Klaviyo workflow in three key areas:
 ## Features
 
 ### Data Operations
+
 - Execute and save SQL queries for later use
 - Parameterized queries with variable substitution
 - Database connection management
 
 ### Klaviyo Operations
+
 - **Profiles**: Create, update, and view customer profiles
 - **Lists**: Create, manage, and analyze subscriber lists
 - **Segments**: Build and view dynamic customer segments
@@ -26,17 +28,25 @@ Klavicle streamlines your Klaviyo workflow in three key areas:
 - **Flow Analysis**: Evaluate automation flow structure and effectiveness
 
 ### AI Capabilities
+
 - Intelligent analysis of campaign performance metrics
 - Flow structure recommendations and optimization tips
 - List management insights and segmentation suggestions
 - Export analytics to JSON or Markdown for easy sharing
 - Multiple AI provider options (OpenAI, Anthropic, or mock for testing)
 - Unified cross-entity analysis for holistic marketing insights
+- Naming convention recommendations for campaigns, flows, and lists
+- Cleanup recommendations for outdated or problematic items
+- Tag consistency analysis across all entities
+- Customer journey mapping and optimization suggestions
 
 ### User Experience
+
 - Rich terminal output with formatted tables
 - Asynchronous operations for better performance
 - Detailed error handling and troubleshooting guidance
+- Progress tracking for long-running analyses
+- Caching support for faster repeated analyses
 
 ## Installation
 
@@ -126,6 +136,7 @@ klavicle <module> <command> [options] [arguments]
 ```
 
 Where:
+
 - `<module>` is the feature area (e.g., query, list, segment, ai)
 - `<command>` is the specific action to perform
 - `[options]` are flags that modify command behavior
@@ -219,6 +230,7 @@ klavicle list remove-profiles list_id profile_id1 profile_id2
 ```
 
 When using `less -S`:
+
 - Use arrow keys or j/k to scroll up/down
 - Use left/right arrows to scroll horizontally
 - Press 'q' to exit
@@ -279,7 +291,48 @@ klavicle ai analyze --entity-type=lists
 klavicle ai analyze --provider=mock       # Fast, local analysis without API costs
 klavicle ai analyze --provider=anthropic  # Analysis using Anthropic's Claude
 klavicle ai analyze --provider=openai     # Analysis using OpenAI's models
+
+# Filter analysis by date range
+klavicle ai analyze --entity-type=campaigns --start-date=2024-01-01 --end-date=2024-03-31
+
+# Control batch size and token limits
+klavicle ai analyze --entity-type=campaigns --batch-size=500 --max-tokens=100000
 ```
+
+#### Analysis Features
+
+The AI analysis provides:
+
+1. **Campaign Analysis**:
+
+   - Performance metrics and trends
+   - Subject line effectiveness
+   - Send timing optimization
+   - Content structure recommendations
+   - Cleanup suggestions for outdated campaigns
+
+2. **Flow Analysis**:
+
+   - Structure and complexity assessment
+   - Channel usage optimization
+   - Trigger effectiveness
+   - Naming convention recommendations
+   - Cleanup suggestions for inactive flows
+
+3. **List Analysis**:
+
+   - Size and type distribution
+   - Segmentation strategy
+   - Organization recommendations
+   - Naming convention suggestions
+   - Cleanup recommendations for empty or outdated lists
+
+4. **Unified Analysis**:
+   - Account health score
+   - Cross-entity tag consistency
+   - Customer journey mapping
+   - Strategic recommendations
+   - Resource allocation guidance
 
 #### Exporting Analysis Results
 
@@ -322,10 +375,12 @@ klavicle ai init-exports-dir ./exports
 #### Exported Files
 
 Exported files will be saved in the current directory with a timestamp:
+
 - JSON files: `entity_type_analysis_YYYYMMDD_HHMMSS.json`
 - Markdown files: `entity_type_analysis_YYYYMMDD_HHMMSS.md`
 
 The markdown exports contain:
+
 - Summary of findings
 - Key metrics and statistics
 - Recommendations with expected impact
@@ -345,6 +400,7 @@ klavicle ai analyze --entity-type=all --export-format=md
 ```
 
 The unified analysis provides:
+
 - Account health score and assessment
 - Cross-entity tag consistency analysis
 - Customer journey mapping
@@ -436,6 +492,7 @@ Klavicle is organized into modular components:
     - `prompts.py`: Specialized prompts for different entity types
     - `mock_analyzer.py`: Testing without API calls
     - `export.py`: Data import/export utilities
+    - `cache.py`: Analysis result caching
   - `cli/`: Command-line interface and commands
   - `config/`: Configuration management
   - `database/`: Database connection and query handling
@@ -489,6 +546,7 @@ poetry run mypy .
    - Test connection with a simple query
 
 3. **Query Parameters**
+
    - Parameters in SQL queries must be prefixed with `:` (e.g., `:param_name`)
    - Parameter values must be provided when running queries
    - Verify parameter types match expected values
@@ -499,6 +557,8 @@ poetry run mypy .
    - Rate limits: Switch to `--provider=mock` option for testing
    - JSON parsing errors: Check for valid Klaviyo data structure
    - Empty responses: Ensure your account has the relevant entity data
+   - Cache issues: Use `--force-refresh` to bypass cache
+   - Progress tracking: Monitor long-running analyses with status updates
 
 ### Getting Help
 

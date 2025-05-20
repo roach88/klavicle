@@ -3,10 +3,14 @@
 import asyncio
 import json
 import logging
+import time
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union
 
 import aiohttp
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from ..config import get_config
 from .mock_analyzer import MockAIAnalyzer
@@ -18,104 +22,476 @@ console = Console()
 # Define provider types
 ProviderType = Literal["openai", "anthropic", "mock"]
 
+# Cache configuration
+CACHE_DIR = Path.home() / ".klavicle" / "cache" / "analysis"
+CACHE_EXPIRY = 24 * 60 * 60  # 24 hours in seconds
+
+
+class AnalysisCache:
+    """Handles caching of analysis results."""
+
+    def __init__(self, cache_dir: Path = CACHE_DIR):
+        self.cache_dir = cache_dir
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _get_cache_key(self, data_type: str, data_hash: str) -> Path:
+        """Generate cache file path."""
+        return self.cache_dir / f"{data_type}_{data_hash}.json"
+
+    def _hash_data(self, data: Union[str, Dict, List]) -> str:
+        """Generate a hash for the data."""
+        import hashlib
+
+        if isinstance(data, str):
+            data_str = data
+        else:
+            data_str = json.dumps(data, sort_keys=True)
+        return hashlib.md5(data_str.encode()).hexdigest()
+
+    def get(
+        self, data_type: str, data: Union[str, Dict, List]
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve cached analysis if available and not expired."""
+        data_hash = self._hash_data(data)
+        cache_file = self._get_cache_key(data_type, data_hash)
+
+        if not cache_file.exists():
+            return None
+
+        try:
+            with open(cache_file, "r") as f:
+                cache_data = json.load(f)
+
+            # Check if cache is expired
+            if time.time() - cache_data["timestamp"] > CACHE_EXPIRY:
+                cache_file.unlink()
+                return None
+
+            return cache_data["results"]
+        except Exception as e:
+            logger.warning(f"Error reading cache: {str(e)}")
+            return None
+
+    def set(
+        self, data_type: str, data: Union[str, Dict, List], results: Dict[str, Any]
+    ) -> None:
+        """Cache analysis results."""
+        data_hash = self._hash_data(data)
+        cache_file = self._get_cache_key(data_type, data_hash)
+
+        try:
+            cache_data = {"timestamp": time.time(), "results": results}
+            with open(cache_file, "w") as f:
+                json.dump(cache_data, f)
+        except Exception as e:
+            logger.warning(f"Error writing to cache: {str(e)}")
+
+    def clear(self, data_type: Optional[str] = None) -> None:
+        """Clear cache for a specific data type or all types."""
+        if data_type:
+            pattern = f"{data_type}_*.json"
+        else:
+            pattern = "*.json"
+
+        for cache_file in self.cache_dir.glob(pattern):
+            try:
+                cache_file.unlink()
+            except Exception as e:
+                logger.warning(f"Error clearing cache file {cache_file}: {str(e)}")
+
 
 class AIAnalyzer:
     """Provides AI-powered analysis of Klaviyo data."""
 
     def __init__(
         self,
-        provider: ProviderType = "openai",
+        provider: ProviderType = "mock",
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        batch_size: int = 1000,  # Default batch size for large datasets
+        max_tokens: int = 100000,  # Default max tokens per request
+        use_cache: bool = True,  # Enable/disable caching
+        cache_expiry: int = CACHE_EXPIRY,  # Cache expiry in seconds
     ):
         """
-        Initialize AI analyzer with desired provider and settings.
+        Initialize the AI analyzer.
 
         Args:
-            provider: AI service provider ("openai", "anthropic", or "mock")
-            api_key: API key for the selected provider (falls back to environment variables)
-            model: Specific model to use (defaults to appropriate model per provider)
+            provider: AI provider to use ("openai", "anthropic", or "mock")
+            api_key: Optional API key (if not provided, will use config)
+            model: Optional model name (if not provided, will use provider default)
+            batch_size: Maximum number of items to process in a single batch
+            max_tokens: Maximum tokens to use per request
+            use_cache: Whether to use caching for analysis results
+            cache_expiry: Cache expiry time in seconds
         """
         self.provider = provider
-        self._setup_provider(api_key, model)
+        self.api_key = api_key
+        self.model = model
+        self.batch_size = batch_size
+        self.max_tokens = max_tokens
+        self.use_cache = use_cache
+        self.cache_expiry = cache_expiry
+        self._setup_provider()
         self.console = Console()
+        self.cache = AnalysisCache() if use_cache else None
+        self._analysis_progress = None
 
-    def _setup_provider(self, api_key: Optional[str], model: Optional[str]) -> None:
+    def _setup_progress(self, total: int, description: str) -> None:
+        """Set up progress tracking."""
+        self._analysis_progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=self.console,
+        )
+        self._analysis_progress.start()
+        self._task_id = self._analysis_progress.add_task(description, total=total)
+
+    def _update_progress(self, advance: int = 1) -> None:
+        """Update progress tracking."""
+        if self._analysis_progress and hasattr(self, "_task_id"):
+            self._analysis_progress.advance(self._task_id, advance)
+
+    def _finish_progress(self) -> None:
+        """Finish progress tracking."""
+        if self._analysis_progress:
+            self._analysis_progress.stop()
+            self._analysis_progress = None
+
+    def _setup_provider(self) -> None:
+        """Set up the AI provider based on configuration."""
+        if self.provider == "openai":
+            from openai import AsyncOpenAI
+
+            self.api_url = "https://api.openai.com/v1/chat/completions"
+            self.client = AsyncOpenAI(
+                api_key=self.api_key or get_config().get_ai_provider_api_key("openai")
+            )
+        elif self.provider == "anthropic":
+            from anthropic import AsyncAnthropic
+
+            self.api_url = "https://api.anthropic.com/v1/messages"
+            self.client = AsyncAnthropic(
+                api_key=self.api_key
+                or get_config().get_ai_provider_api_key("anthropic")
+            )
+        else:
+            self.client = None
+            self.api_url = None
+
+    def _estimate_tokens(self, text: str) -> int:
         """
-        Configure the selected AI provider.
+        Estimate the number of tokens in a text string.
+        This is a rough estimate based on average token length.
 
         Args:
-            api_key: API key for the provider
-            model: Model name to use
-        """
-        # Get configuration manager
-        config = get_config()
+            text: The text to estimate tokens for
 
-        if self.provider == "openai":
-            # Use provided key, or get from config/env
-            self.api_key = api_key or config.get_ai_provider_api_key("openai")
-            self.api_url = "https://api.openai.com/v1/chat/completions"
-            self.model = model or config.get_ai_provider_model("openai")
-            if not self.api_key:
-                logger.warning(
-                    "No OpenAI API key provided. Use set-api-key command or set OPENAI_API_KEY environment variable."
-                )
-        elif self.provider == "anthropic":
-            # Use provided key, or get from config/env
-            self.api_key = api_key or config.get_ai_provider_api_key("anthropic")
-            self.api_url = "https://api.anthropic.com/v1/messages"
-            self.model = model or config.get_ai_provider_model("anthropic")
-            if not self.api_key:
-                logger.warning(
-                    "No Anthropic API key provided. Use set-api-key command or set ANTHROPIC_API_KEY environment variable."
-                )
-        elif self.provider == "mock":
-            # Mock provider for testing without API calls
-            self.api_key = "mock_key"
-            self.api_url = "mock://api.example.com"
-            self.model = "mock-model"
-        else:
-            raise ValueError(f"Unsupported provider: {self.provider}")
+        Returns:
+            Estimated number of tokens
+        """
+        # Rough estimate: 1 token ≈ 4 characters for English text
+        return len(text) // 4
+
+    def _should_batch(self, data: Union[str, Dict, List]) -> bool:
+        """
+        Determine if the data should be processed in batches.
+
+        Args:
+            data: The data to check
+
+        Returns:
+            True if data should be batched, False otherwise
+        """
+        if isinstance(data, str):
+            return self._estimate_tokens(data) > self.max_tokens
+        elif isinstance(data, (dict, list)):
+            data_str = json.dumps(data)
+            return self._estimate_tokens(data_str) > self.max_tokens
+        return False
+
+    def _create_batches(self, data: List[Any]) -> List[List[Any]]:
+        """
+        Split data into batches, prioritizing data type grouping.
+
+        Args:
+            data: List of items to batch
+
+        Returns:
+            List of batches
+        """
+        # First, group by data type if possible
+        if data and isinstance(data[0], dict):
+            # Group by type if available
+            type_groups = {}
+            for item in data:
+                item_type = item.get("type", "unknown")
+                if item_type not in type_groups:
+                    type_groups[item_type] = []
+                type_groups[item_type].append(item)
+
+            # If we have multiple types, return type-based batches
+            if len(type_groups) > 1:
+                return list(type_groups.values())
+
+            # If all same type, check if we need to split by size
+            if len(data) > self.batch_size:
+                return [
+                    data[i : i + self.batch_size]
+                    for i in range(0, len(data), self.batch_size)
+                ]
+            return [data]
+
+        # Fallback to size-based batching if we can't group by type
+        return [
+            data[i : i + self.batch_size] for i in range(0, len(data), self.batch_size)
+        ]
+
+    def _filter_by_date_range(
+        self,
+        data: List[Dict[str, Any]],
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        date_field: str = "created",
+    ) -> List[Dict[str, Any]]:
+        """
+        Filter data by date range.
+
+        Args:
+            data: List of data items to filter
+            start_date: Optional start date for filtering
+            end_date: Optional end date for filtering
+            date_field: Field name containing the date to filter on
+
+        Returns:
+            Filtered list of data items
+        """
+        if not start_date and not end_date:
+            return data
+
+        filtered_data = []
+        for item in data:
+            item_date = item.get(date_field)
+            if not item_date:
+                continue
+
+            try:
+                if isinstance(item_date, str):
+                    item_date = datetime.fromisoformat(item_date.replace("Z", "+00:00"))
+
+                if start_date and item_date < start_date:
+                    continue
+                if end_date and item_date > end_date:
+                    continue
+
+                filtered_data.append(item)
+            except (ValueError, TypeError):
+                continue
+
+        return filtered_data
 
     async def analyze_data(
         self,
         data_type: str,
         data: Union[str, Dict, List],
         context: Optional[Dict[str, Any]] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        date_field: str = "created",
+        force_refresh: bool = False,
     ) -> Dict[str, Any]:
         """
         Analyze Klaviyo data using AI and return structured insights.
 
         Args:
-            data_type: Type of data being analyzed ("campaigns", "flows", "lists", etc.)
+            data_type: Type of data being analyzed ("campaigns", "flows", "lists", "unified")
             data: The data to analyze (JSON string or Python dict/list)
             context: Optional additional context or instructions for analysis
+            start_date: Optional start date for filtering data
+            end_date: Optional end date for filtering data
+            date_field: Field name containing the date to filter on
+            force_refresh: Whether to force a fresh analysis ignoring cache
 
         Returns:
             Dict containing structured analysis results
         """
-        # Convert data to string if it's a dict or list
-        if isinstance(data, (dict, list)):
-            data_str = json.dumps(data)
-        else:
-            data_str = data
+        logger.info(f"Starting analysis of {data_type} data")
 
-        # Generate the appropriate prompt
-        prompt = self._generate_prompt(data_type, data_str, context)
+        # Check cache first if enabled and not forcing refresh
+        if self.use_cache and self.cache and not force_refresh:
+            cached_results = self.cache.get(data_type, data)
+            if cached_results:
+                logger.info(f"Using cached results for {data_type} analysis")
+                return cached_results
 
-        # Query the AI provider
         try:
-            # Pass data_type for better mock responses
-            response = await self._query_ai(prompt, data_type)
-            # Parse the response into a structured format
-            return self._parse_response(response)
+            # Convert data to dict if it's a string
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON string provided: {str(e)}")
+                    raise ValueError("Invalid JSON string provided")
+
+            # For unified analysis, use the hybrid approach
+            if data_type == "unified" and isinstance(data, dict):
+                logger.info("Starting unified analysis using hybrid approach")
+                self._setup_progress(3, "Analyzing individual entities...")
+
+                # First analyze individual entities
+                individual_results = await self.analyze_individual_entities(
+                    data,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+
+                self._update_progress()
+                logger.info("Individual entity analysis complete")
+
+                # Then perform unified analysis
+                self._update_progress()
+                logger.info("Starting unified analysis synthesis")
+                results = await self.analyze_unified(individual_results, data)
+
+                self._finish_progress()
+
+                # Cache results if enabled
+                if self.use_cache and self.cache:
+                    self.cache.set(data_type, data, results)
+
+                return results
+
+            # For individual entity analysis, use the original approach
+            if isinstance(data, dict):
+                data = [data]
+            elif not isinstance(data, list):
+                raise ValueError("Data must be a string, dict, or list")
+
+            # Apply date filtering if dates are provided
+            if start_date or end_date:
+                data = self._filter_by_date_range(
+                    data, start_date, end_date, date_field
+                )
+
+            # Check if we need to batch the data
+            if self._should_batch(data):
+                logger.info("Data requires batching. Creating batches...")
+                batches = self._create_batches(data)
+                total_batches = len(batches)
+                self._setup_progress(
+                    total_batches, f"Processing {total_batches} batches..."
+                )
+
+                all_results = []
+                for i, batch in enumerate(batches, 1):
+                    try:
+                        logger.info(f"Processing batch {i}/{total_batches}")
+                        batch_str = json.dumps(batch)
+                        prompt = self._generate_prompt(data_type, batch_str, context)
+
+                        response = await self._query_ai(prompt, data_type)
+                        batch_results = self._parse_response(response)
+                        all_results.append(batch_results)
+                        self._update_progress()
+                    except Exception as e:
+                        logger.error(f"Error processing batch {i}: {str(e)}")
+                        # Continue with next batch instead of failing completely
+                        continue
+
+                self._finish_progress()
+                results = self._combine_batch_results(all_results)
+            else:
+                # Process all data at once
+                logger.info("Processing data in single batch")
+                data_str = json.dumps(data)
+                prompt = self._generate_prompt(data_type, data_str, context)
+
+                try:
+                    response = await self._query_ai(prompt, data_type)
+                    results = self._parse_response(response)
+                except Exception as e:
+                    logger.error(f"Error during AI analysis: {str(e)}")
+                    return {
+                        "error": str(e),
+                        "summary": "AI analysis failed. See error for details.",
+                        "recommendations": [],
+                    }
+
+            # Cache results if enabled
+            if self.use_cache and self.cache:
+                self.cache.set(data_type, data, results)
+
+            return results
+
         except Exception as e:
-            logger.error(f"Error during AI analysis: {str(e)}")
+            logger.error(f"Unexpected error during analysis: {str(e)}")
+            self._finish_progress()
             return {
                 "error": str(e),
-                "summary": "AI analysis failed. See error for details.",
+                "summary": "Analysis failed due to unexpected error",
                 "recommendations": [],
             }
+
+    def _combine_batch_results(
+        self, batch_results: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Combine results from multiple batches into a single analysis.
+
+        Args:
+            batch_results: List of results from individual batches
+
+        Returns:
+            Combined analysis results
+        """
+        if not batch_results:
+            return {
+                "error": "No valid results from any batch",
+                "summary": "Analysis failed across all batches",
+                "recommendations": [],
+            }
+
+        # Initialize combined results
+        combined = {
+            "summary": "Combined analysis from multiple batches",
+            "key_insights": [],
+            "strengths": [],
+            "improvement_areas": [],
+            "recommendations": [],
+            "experiments": [],
+        }
+
+        # Combine results from each batch
+        for batch in batch_results:
+            if "key_insights" in batch:
+                combined["key_insights"].extend(batch["key_insights"])
+            if "strengths" in batch:
+                combined["strengths"].extend(batch["strengths"])
+            if "improvement_areas" in batch:
+                combined["improvement_areas"].extend(batch["improvement_areas"])
+            if "recommendations" in batch:
+                combined["recommendations"].extend(batch["recommendations"])
+            if "experiments" in batch:
+                combined["experiments"].extend(batch["experiments"])
+
+        # Remove duplicates based on content
+        for key in [
+            "key_insights",
+            "strengths",
+            "improvement_areas",
+            "recommendations",
+            "experiments",
+        ]:
+            if key in combined:
+                seen = set()
+                combined[key] = [
+                    item
+                    for item in combined[key]
+                    if not (item in seen or seen.add(item))
+                ]
+
+        return combined
 
     def _generate_prompt(
         self, data_type: str, data: str, context: Optional[Dict[str, Any]] = None
@@ -140,6 +516,8 @@ class AIAnalyzer:
             base_prompt = self._get_list_prompt_template()
         elif data_type == "unified":
             base_prompt = self._get_unified_prompt_template()
+        elif data_type == "tags":
+            base_prompt = self._get_tag_prompt_template()
         else:
             base_prompt = self._get_generic_prompt_template()
 
@@ -184,6 +562,12 @@ class AIAnalyzer:
         from .prompts import get_unified_prompt
 
         return get_unified_prompt()
+
+    def _get_tag_prompt_template(self) -> str:
+        """Return the prompt template for tag analysis."""
+        from .prompts import get_tag_prompt
+
+        return get_tag_prompt()
 
     def _get_generic_prompt_template(self) -> str:
         """Return a generic prompt template for unknown data types."""
@@ -259,8 +643,19 @@ Return your analysis as a JSON object with the following structure:
         headers = self._get_provider_headers()
         data = self._get_provider_payload(prompt)
 
+        # Log connection details if verbose logging is enabled
+        if self.provider == "anthropic" and logger.isEnabledFor(logging.DEBUG):
+            if self.api_key:
+                logger.debug(
+                    f"Anthropic API key: {self.api_key[:5]}...{self.api_key[-4:]}"
+                )
+            logger.debug(f"Headers: {json.dumps(headers)}")
+            logger.debug(f"Model: {self.model}")
+
         async with aiohttp.ClientSession() as session:
             try:
+                if not self.api_url:
+                    raise ValueError("API URL not configured for provider")
                 async with session.post(
                     self.api_url,
                     headers=headers,
@@ -283,18 +678,20 @@ Return your analysis as a JSON object with the following structure:
         if self.provider == "openai":
             return {
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
+                "Authorization": f"Bearer {self.api_key or ''}",
             }
         elif self.provider == "anthropic":
             return {
                 "Content-Type": "application/json",
-                "X-API-Key": self.api_key or "",
                 "anthropic-version": "2023-06-01",
+                "x-api-key": self.api_key or "",
             }
         else:
             return {"Content-Type": "application/json"}
 
-    def _get_provider_payload(self, prompt: str) -> Dict[str, Any]:
+    def _get_provider_payload(
+        self, prompt: str, thinking: bool = False
+    ) -> Dict[str, Any]:
         """Get the appropriate request payload for the configured provider."""
         if self.provider == "openai":
             return {
@@ -304,12 +701,19 @@ Return your analysis as a JSON object with the following structure:
                 "response_format": {"type": "json_object"},  # Request JSON response
             }
         elif self.provider == "anthropic":
-            return {
+            payload = {
                 "model": self.model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
                 "max_tokens": 4000,
+                "system": "You must respond with valid JSON only, omitting any preamble or explanation.",
             }
+            if thinking:
+                payload["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": 2048,  # You can adjust this value as needed
+                }
+            return payload
         else:
             return {"prompt": prompt}
 
@@ -318,38 +722,59 @@ Return your analysis as a JSON object with the following structure:
         if self.provider == "openai":
             return response_json["choices"][0]["message"]["content"]
         elif self.provider == "anthropic":
-            return response_json["content"][0]["text"]
+            logger.debug("Extracting Anthropic response text")
+            # Handle the Anthropic API response format
+            try:
+                # Latest API format (Claude 3)
+                if "content" in response_json:
+                    # Handle array of content blocks
+                    if isinstance(response_json["content"], list):
+                        # Extract all text blocks and join them
+                        all_text = ""
+                        for block in response_json["content"]:
+                            if "type" in block and block["type"] == "text":
+                                all_text += block["text"]
+                        if all_text:
+                            logger.debug(
+                                f"Extracted text from content blocks: {all_text[:100]}..."
+                            )
+                            return all_text
+
+                    # Handle single content object
+                    elif (
+                        isinstance(response_json["content"], dict)
+                        and "text" in response_json["content"]
+                    ):
+                        text = response_json["content"]["text"]
+                        logger.debug(
+                            f"Extracted text from content dict: {text[:100]}..."
+                        )
+                        return text
+
+                # Check for response in completion field (Claude 2 format)
+                if "completion" in response_json:
+                    logger.debug(
+                        f"Found completion field: {response_json['completion'][:100]}..."
+                    )
+                    return response_json["completion"]
+
+                # Try other possible fields
+                for field in ["text", "message", "result", "output", "response"]:
+                    if field in response_json:
+                        logger.debug(f"Found {field} field")
+                        return str(response_json[field])
+
+            except (KeyError, IndexError, TypeError) as e:
+                logger.warning(
+                    f"Error extracting Anthropic response text using primary method: {str(e)}"
+                )
+                logger.debug(f"Exception in extract_response_text: {str(e)}")
+
+            # Last resort: return the entire response as json string
+            logger.debug("Using last resort - returning full response")
+            return json.dumps(response_json)
         else:
             return str(response_json)
-
-    def _parse_response(self, response_text: str) -> Dict[str, Any]:
-        """
-        Parse the AI response text into a structured format.
-
-        Args:
-            response_text: Raw response from the AI
-
-        Returns:
-            Structured dict of analysis results
-        """
-        try:
-            # Try to parse the response as JSON
-            result = json.loads(response_text)
-            return result
-        except json.JSONDecodeError:
-            # If not valid JSON, try to extract JSON from the text
-            try:
-                # Look for JSON between ``` markers
-                json_text = response_text.split("```json")[1].split("```")[0]
-                result = json.loads(json_text.strip())
-                return result
-            except (IndexError, json.JSONDecodeError):
-                # Return a simplified dict with the raw text
-                return {
-                    "error": "Failed to parse AI response as JSON",
-                    "summary": "The AI response couldn't be structured properly.",
-                    "raw_response": response_text,
-                }
 
     def _get_mock_response(
         self, data_type: str = "generic", data: Optional[Dict[str, Any]] = None
@@ -599,3 +1024,256 @@ Return your analysis as a JSON object with the following structure:
                                         )
                         else:
                             self.console.print(f"• {item}")
+
+    async def analyze_individual_entities(
+        self,
+        data: Dict[str, Any],
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Analyze individual entity types (campaigns, flows, lists) in parallel.
+
+        Args:
+            data: Dictionary containing entity data
+            start_date: Optional start date for filtering
+            end_date: Optional end date for filtering
+
+        Returns:
+            Dictionary containing analysis results for each entity type
+        """
+
+        async def analyze_entity(
+            entity_type: str, entity_data: List[Any]
+        ) -> Dict[str, Any]:
+            try:
+                data_str = json.dumps(entity_data)
+                return await self.analyze_data(
+                    entity_type,
+                    data_str,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            except Exception as e:
+                logger.error(f"Error analyzing {entity_type}: {str(e)}")
+                return {
+                    "error": str(e),
+                    "summary": f"Analysis of {entity_type} failed",
+                }
+
+        # Run individual analyses in parallel
+        tasks = []
+        for entity_type in ["campaigns", "flows", "lists"]:
+            if entity_type in data:
+                tasks.append(analyze_entity(entity_type, data[entity_type]))
+
+        results = await asyncio.gather(*tasks)
+
+        return {
+            "campaigns": results[0] if "campaigns" in data else {},
+            "flows": results[1] if "flows" in data else {},
+            "lists": results[2] if "lists" in data else {},
+        }
+
+    def _extract_key_insights(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract key insights from an individual analysis.
+
+        Args:
+            analysis: Analysis results for an entity type
+
+        Returns:
+            Dictionary containing key insights and metrics
+        """
+        return {
+            "summary": analysis.get("summary", ""),
+            "key_metrics": analysis.get("key_metrics", {}),
+            "top_performing": analysis.get("top_performing", []),
+            "underperforming": analysis.get("underperforming", []),
+            "trends": analysis.get("trends", []),
+            "recommendations": analysis.get("recommendations", []),
+            "critical_issues": analysis.get("critical_issues", []),
+        }
+
+    async def analyze_unified(
+        self,
+        individual_results: Dict[str, Dict[str, Any]],
+        raw_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Perform unified analysis using results from individual entity analyses.
+
+        Args:
+            individual_results: Results from individual entity analyses
+            raw_data: Original raw data for reference
+
+        Returns:
+            Unified analysis results
+        """
+        # Extract key insights from individual analyses
+        summary_data = {
+            entity_type: self._extract_key_insights(results)
+            for entity_type, results in individual_results.items()
+        }
+
+        # Add raw data metrics
+        summary_data["raw_metrics"] = {
+            "campaign_count": len(raw_data.get("campaigns", [])),
+            "flow_count": len(raw_data.get("flows", [])),
+            "list_count": len(raw_data.get("lists", [])),
+        }
+
+        # Generate unified prompt with summarized insights
+        prompt = self._generate_unified_prompt(summary_data, raw_data)
+
+        try:
+            response = await self._query_ai(prompt, "unified")
+            return self._parse_response(response)
+        except Exception as e:
+            logger.error(f"Error during unified analysis: {str(e)}")
+            return {
+                "error": str(e),
+                "summary": "Unified analysis failed",
+            }
+
+    def _generate_unified_prompt(
+        self,
+        summary_data: Dict[str, Any],
+        raw_data: Dict[str, Any],
+    ) -> str:
+        """
+        Generate a prompt for unified analysis using summarized insights.
+
+        Args:
+            summary_data: Summarized insights from individual analyses
+            raw_data: Original raw data
+
+        Returns:
+            Formatted prompt string
+        """
+        base_prompt = self._get_unified_prompt_template()
+
+        # Add summarized insights
+        insights_str = json.dumps(summary_data, indent=2)
+
+        # Add raw data preview
+        raw_data_preview = json.dumps(raw_data, indent=2)[:10000]  # Limit preview size
+
+        return f"""
+{base_prompt}
+
+SUMMARIZED INSIGHTS FROM INDIVIDUAL ANALYSES:
+```json
+{insights_str}
+```
+
+RAW DATA PREVIEW (potentially truncated):
+```json
+{raw_data_preview}
+```
+
+Provide your unified analysis in JSON format as specified in the instructions above.
+Focus on synthesizing the pre-analyzed insights and identifying cross-entity patterns.
+"""
+
+    def _parse_response(self, response_text: str) -> Dict[str, Any]:
+        """
+        Parse the AI response text into a structured format.
+
+        Args:
+            response_text: Raw response from the AI
+
+        Returns:
+            Structured dict of analysis results
+        """
+        logger.debug(f"Parsing response text: {response_text[:200]}...")
+
+        try:
+            # Try to parse the response as JSON
+            result = json.loads(response_text)
+            return result
+        except json.JSONDecodeError as e:
+            logger.debug(f"JSON decode error: {str(e)}")
+
+            # If not valid JSON, try to extract JSON from the text
+            try:
+                # Try to find JSON object with regex
+                import re
+
+                json_match = re.search(r"(\{.*\})", response_text, re.DOTALL)
+                if json_match:
+                    json_text = json_match.group(1)
+                    logger.debug("Extracted JSON using regex")
+                    result = json.loads(json_text.strip())
+                    return result
+
+                # Look for JSON between ``` markers
+                if "```" in response_text:
+                    parts = response_text.split("```")
+                    for i in range(1, len(parts), 2):
+                        try:
+                            result = json.loads(parts[i].strip())
+                            logger.debug("Extracted JSON from code block")
+                            return result
+                        except json.JSONDecodeError:
+                            continue
+
+                    # Try with specific json tag
+                    if "```json" in response_text:
+                        json_text = response_text.split("```json")[1].split("```")[0]
+                        result = json.loads(json_text.strip())
+                        logger.debug("Extracted JSON from json code block")
+                        return result
+
+                logger.debug("Could not extract JSON from response")
+            except (IndexError, json.JSONDecodeError) as e:
+                logger.debug(f"JSON extraction error: {str(e)}")
+
+            # Return a simplified dict with the raw text
+            return {
+                "error": "Failed to parse AI response as JSON",
+                "summary": "The AI response couldn't be structured properly.",
+                "raw_response": response_text,
+            }
+
+    async def refresh_analysis(
+        self,
+        data_type: str,
+        data: Union[str, Dict, List],
+        context: Optional[Dict[str, Any]] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """
+        Force a fresh analysis, ignoring any cached results.
+
+        Args:
+            data_type: Type of data being analyzed
+            data: The data to analyze
+            context: Optional additional context
+            start_date: Optional start date for filtering
+            end_date: Optional end date for filtering
+
+        Returns:
+            Fresh analysis results
+        """
+        logger.info(f"Refreshing analysis for {data_type}")
+        return await self.analyze_data(
+            data_type=data_type,
+            data=data,
+            context=context,
+            start_date=start_date,
+            end_date=end_date,
+            force_refresh=True,
+        )
+
+    def clear_cache(self, data_type: Optional[str] = None) -> None:
+        """
+        Clear the analysis cache.
+
+        Args:
+            data_type: Optional specific data type to clear cache for
+        """
+        if self.cache:
+            self.cache.clear(data_type)
+            logger.info(f"Cleared cache for {data_type if data_type else 'all types'}")

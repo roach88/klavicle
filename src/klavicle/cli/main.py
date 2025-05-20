@@ -412,7 +412,7 @@ def unified_analysis(provider: str, sample: bool):
 )
 @click.option(
     "--export",
-    type=click.Choice(["json", "csv"]),
+    type=click.Choice(["json", "csv", "md", "markdown"]),
     help="Export format for analysis results",
 )
 @click.option(
