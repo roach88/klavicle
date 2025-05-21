@@ -169,13 +169,25 @@ class AIAnalyzer:
                 api_key=self.api_key or get_config().get_ai_provider_api_key("openai")
             )
         elif self.provider == "anthropic":
+            # Import but don't initialize yet so we can handle version differences
             from anthropic import AsyncAnthropic
 
             self.api_url = "https://api.anthropic.com/v1/messages"
-            self.client = AsyncAnthropic(
-                api_key=self.api_key
-                or get_config().get_ai_provider_api_key("anthropic")
-            )
+            # Get the API key
+            api_key = self.api_key or get_config().get_ai_provider_api_key("anthropic")
+            
+            # Initialize the client safely, handling different versions
+            try:
+                # Try initializing without proxies (for newer versions)
+                self.client = AsyncAnthropic(api_key=api_key)
+            except TypeError as e:
+                if "proxies" in str(e):
+                    # If 'proxies' keyword is causing issues, try initializing with specific parameters only
+                    logger.warning("Anthropic client initialization error, trying alternate method")
+                    self.client = AsyncAnthropic(api_key=api_key)
+                else:
+                    # Re-raise if it's another TypeError
+                    raise
         else:
             self.client = None
             self.api_url = None
@@ -640,6 +652,44 @@ Return your analysis as a JSON object with the following structure:
                     parsed_data = None
             return self._get_mock_response(data_type, parsed_data)
 
+        # Handle special case for Anthropic's client
+        if self.provider == "anthropic" and self.client:
+            try:
+                # Direct client usage for Anthropic
+                payload = self._get_provider_payload(prompt)
+                model = payload.pop("model", "claude-3-opus-20240229")
+                messages = payload.pop("messages", [{"role": "user", "content": prompt}])
+                system = payload.pop("system", "")
+                
+                # Log connection details if verbose logging is enabled
+                if logger.isEnabledFor(logging.DEBUG):
+                    if self.api_key:
+                        logger.debug(f"Anthropic API key: {self.api_key[:5]}...{self.api_key[-4:]}")
+                    logger.debug(f"Model: {model}")
+                
+                # Direct client call instead of using aiohttp
+                response = await self.client.messages.create(
+                    model=model,
+                    messages=messages,
+                    system=system,
+                    max_tokens=payload.get("max_tokens", 4000),
+                    temperature=payload.get("temperature", 0.3),
+                )
+                
+                # Return the response
+                if hasattr(response, "content") and response.content:
+                    if isinstance(response.content, list):
+                        # Extract text from content blocks
+                        return "".join(block.text for block in response.content if hasattr(block, "text"))
+                    return str(response.content)
+                return str(response)
+            
+            except Exception as e:
+                logger.error(f"Error using Anthropic client directly: {str(e)}")
+                logger.debug("Falling back to manual HTTP request")
+                # Fall through to the manual HTTP method below
+        
+        # Generic HTTP method for other providers or as fallback
         headers = self._get_provider_headers()
         data = self._get_provider_payload(prompt)
 
@@ -650,7 +700,7 @@ Return your analysis as a JSON object with the following structure:
                     f"Anthropic API key: {self.api_key[:5]}...{self.api_key[-4:]}"
                 )
             logger.debug(f"Headers: {json.dumps(headers)}")
-            logger.debug(f"Model: {self.model}")
+            logger.debug(f"Model: {self.model or data.get('model', 'default')}")
 
         async with aiohttp.ClientSession() as session:
             try:
@@ -695,24 +745,37 @@ Return your analysis as a JSON object with the following structure:
         """Get the appropriate request payload for the configured provider."""
         if self.provider == "openai":
             return {
-                "model": self.model,
+                "model": self.model or "gpt-4-turbo",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,  # Lower temperature for more deterministic outputs
                 "response_format": {"type": "json_object"},  # Request JSON response
             }
         elif self.provider == "anthropic":
             payload = {
-                "model": self.model,
+                "model": self.model or "claude-3-opus-20240229",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
                 "max_tokens": 4000,
                 "system": "You must respond with valid JSON only, omitting any preamble or explanation.",
             }
-            if thinking:
-                payload["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": 2048,  # You can adjust this value as needed
-                }
+            
+            # The thinking parameter was deprecated in newer versions
+            try:
+                # Only add if the client is initialized
+                if thinking and hasattr(self, 'client') and self.client:
+                    # Check if the anthropic version supports thinking
+                    import anthropic
+                    if hasattr(anthropic, "__version__"):
+                        version = anthropic.__version__
+                        # Only include thinking for versions that support it
+                        if version.startswith("0.") and int(version.split(".")[1]) < 51:
+                            payload["thinking"] = {
+                                "type": "enabled",
+                                "budget_tokens": 2048,
+                            }
+            except (ImportError, AttributeError, ValueError) as e:
+                logger.debug(f"Could not check for thinking support: {str(e)}")
+                
             return payload
         else:
             return {"prompt": prompt}
