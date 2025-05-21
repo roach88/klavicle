@@ -29,10 +29,24 @@ console = Console()
 
 def get_klaviyo_client() -> KlaviyoClient:
     """Create and return a KlaviyoClient instance."""
+    print("Attempting to get Klaviyo API key...")
     api_key = os.getenv("KLAVIYO_API_KEY")
     if not api_key:
-        raise ValueError("KLAVIYO_API_KEY environment variable is not set")
-    return KlaviyoClient(api_key=api_key)
+        print("KLAVIYO_API_KEY environment variable is not set")
+        # Use a mock key for testing if not available
+        print("Using mock API key for debugging")
+        api_key = "mock-api-key-for-testing"
+    else:
+        print("Got API key from environment")
+
+    print("Initializing Klaviyo client...")
+    try:
+        client = KlaviyoClient(api_key=api_key)
+        print("Klaviyo client initialized successfully")
+        return client
+    except Exception as e:
+        print(f"Error initializing Klaviyo client: {str(e)}")
+        raise
 
 
 async def get_profile_impl(profile_id: str) -> None:
@@ -767,10 +781,12 @@ async def analyze_flows_impl(
                             "created": stat.created.isoformat(),
                             "updated": stat.updated.isoformat(),
                             "trigger_type": stat.trigger_type,
-                            "action_count": stat.action_count,
-                            "email_count": stat.email_count,
-                            "sms_count": stat.sms_count,
-                            "time_delay_count": stat.time_delay_count,
+                            "structure": {
+                                "action_count": stat.action_count,
+                                "email_count": stat.email_count,
+                                "sms_count": stat.sms_count,
+                                "time_delay_count": stat.time_delay_count,
+                            },
                             "tags": stat.tags,
                         }
                         for stat in flow_stats
@@ -1208,7 +1224,9 @@ async def export_data_for_ai_impl(
         console.print(f"[red]Error exporting data: {str(e)}[/red]")
 
 
-async def unified_ai_analysis_impl(provider: Optional[str] = None, use_sample: bool = False) -> None:
+async def unified_ai_analysis_impl(
+    provider: Optional[str] = None, use_sample: bool = False
+) -> None:
     """
     Implementation of unified AI analysis command.
 
@@ -1216,53 +1234,84 @@ async def unified_ai_analysis_impl(provider: Optional[str] = None, use_sample: b
         provider: AI provider to use ("openai", "anthropic", or "mock")
         use_sample: If True, use a smaller dataset sample for faster testing
     """
-    client = get_klaviyo_client()
+    # Add debug print to see if we enter this function
+    print(
+        f"Starting unified_ai_analysis_impl with provider={provider}, use_sample={use_sample}"
+    )
+
+    try:
+        client = get_klaviyo_client()
+        print("Successfully created Klaviyo client")
+    except Exception as e:
+        print(f"Error creating Klaviyo client: {str(e)}")
+        raise
 
     try:
         from ..ai.analyzer import AIAnalyzer
         from ..ai.export import export_ai_analysis_results
-        
+
+        print("Successfully imported required modules")
+
         # Use mock provider for testing if not specified
         if provider is None:
             provider = "mock"
+            print("No provider specified, using mock")
 
         # If provider is not specified, use default from config
         if not provider:
             from ..config import get_config
 
             provider = get_config().get_default_ai_provider()
+            print(f"Using default provider from config: {provider}")
 
         # Create analyzers
-        campaign_analyzer = CampaignAnalyzer(client)
-        flow_analyzer = FlowAnalyzer(client)
-        list_analyzer = ListAnalyzer(client)
+        print("Creating analyzers...")
+        try:
+            campaign_analyzer = CampaignAnalyzer(client)
+            print("Created campaign analyzer")
+            flow_analyzer = FlowAnalyzer(client)
+            print("Created flow analyzer")
+            list_analyzer = ListAnalyzer(client)
+            print("Created list analyzer")
+        except Exception as e:
+            print(f"Error creating analyzers: {str(e)}")
+            raise
 
         # Fetch all data
-        with console.status("[bold green]Fetching campaigns data..."):
-            campaign_stats = await campaign_analyzer.analyze_all_campaigns()
-            campaign_data = [
-                {
-                    "id": stat.id,
-                    "name": stat.name,
-                    "status": stat.status,
-                    "created": stat.created.isoformat() if stat.created else None,
-                    "updated": stat.updated.isoformat() if stat.updated else None,
-                    "send_time": stat.send_time.isoformat() if stat.send_time else None,
-                    "channel": stat.channel,
-                    "message_type": stat.message_type,
-                    "subject_line": stat.subject_line,
-                    "from_email": stat.from_email,
-                    "from_name": stat.from_name,
-                    "tags": stat.tags,
-                    "metrics": {
-                        "recipient_count": stat.recipient_count,
-                        "open_rate": stat.open_rate,
-                        "click_rate": stat.click_rate,
-                        "revenue": stat.revenue,
-                    },
-                }
-                for stat in campaign_stats
-            ]
+        print("Fetching campaigns data...")
+        try:
+            with console.status("[bold green]Fetching campaigns data..."):
+                campaign_stats = await campaign_analyzer.analyze_all_campaigns()
+                print(f"Got {len(campaign_stats)} campaign stats")
+                campaign_data = [
+                    {
+                        "id": stat.id,
+                        "name": stat.name,
+                        "status": stat.status,
+                        "created": stat.created.isoformat() if stat.created else None,
+                        "updated": stat.updated.isoformat() if stat.updated else None,
+                        "send_time": stat.send_time.isoformat()
+                        if stat.send_time
+                        else None,
+                        "channel": stat.channel,
+                        "message_type": stat.message_type,
+                        "subject_line": stat.subject_line,
+                        "from_email": stat.from_email,
+                        "from_name": stat.from_name,
+                        "tags": stat.tags,
+                        "metrics": {
+                            "recipient_count": stat.recipient_count,
+                            "open_rate": stat.open_rate,
+                            "click_rate": stat.click_rate,
+                            "revenue": stat.revenue,
+                        },
+                    }
+                    for stat in campaign_stats
+                ]
+                print("Processed campaign data")
+        except Exception as e:
+            print(f"Error fetching campaign data: {str(e)}")
+            raise
 
         with console.status("[bold green]Fetching flows data..."):
             flow_stats = await flow_analyzer.analyze_all_flows()
@@ -1311,41 +1360,55 @@ async def unified_ai_analysis_impl(provider: Optional[str] = None, use_sample: b
 
         # Create AI analyzer and analyze the unified data
         analyzer = AIAnalyzer(provider=cast(ProviderType, provider))
-        
+
         # Debug: Check for any None datetime values that might cause issues
         for data_list in [campaign_data, flow_data, list_data]:
             for item in data_list:
                 if item.get("created") is None:
-                    console.print(f"[yellow]Warning: Found item with None 'created' value: {item['name']}[/yellow]")
+                    console.print(
+                        f"[yellow]Warning: Found item with None 'created' value: {item['name']}[/yellow]"
+                    )
                 if item.get("updated") is None:
-                    console.print(f"[yellow]Warning: Found item with None 'updated' value: {item['name']}[/yellow]")
-        
+                    console.print(
+                        f"[yellow]Warning: Found item with None 'updated' value: {item['name']}[/yellow]"
+                    )
+
         # Use a simplified dataset for testing or if requested
         if provider == "mock" or use_sample:
             # Create a minimal dataset that we know works
-            sample_size = 2 if use_sample else 5  # Use an even smaller sample if explicitly requested
-            console.print(f"[yellow]Using sample data ({sample_size} items per entity) for analysis[/yellow]")
-            
+            sample_size = (
+                2 if use_sample else 5
+            )  # Use an even smaller sample if explicitly requested
+            console.print(
+                f"[yellow]Using sample data ({sample_size} items per entity) for analysis[/yellow]"
+            )
+
             # Create sample data with just a few items for faster processing
             simplified_data = {
                 "campaigns": campaign_data[:sample_size] if campaign_data else [],
                 "flows": flow_data[:sample_size] if flow_data else [],
-                "lists": list_data[:sample_size] if list_data else []
+                "lists": list_data[:sample_size] if list_data else [],
             }
-            
+
             # Convert data to JSON string
-            with console.status(f"[bold green]Performing unified AI analysis using {provider}..."):
+            with console.status(
+                f"[bold green]Performing unified AI analysis using {provider}..."
+            ):
                 data_json = json.dumps(simplified_data)
                 # Analyze the unified data
                 analysis_results = await analyzer.analyze_data("unified", data_json)
         else:
             # Process the full dataset for real providers
-            with console.status(f"[bold green]Performing unified AI analysis using {provider}..."):
+            with console.status(
+                f"[bold green]Performing unified AI analysis using {provider}..."
+            ):
                 try:
                     # Convert data to JSON string
                     data_json = json.dumps(unified_data)
-                    console.print("[green]Successfully converted unified data to JSON format[/green]")
-                    
+                    console.print(
+                        "[green]Successfully converted unified data to JSON format[/green]"
+                    )
+
                     # Analyze the unified data
                     analysis_results = await analyzer.analyze_data("unified", data_json)
                 except json.JSONDecodeError as e:
@@ -1430,4 +1493,12 @@ async def import_data_for_ai_impl(
 
 def run_async(coro):
     """Helper function to run async functions."""
-    return asyncio.run(coro)
+    print(f"run_async called with coroutine: {coro.__class__.__name__}")
+    try:
+        return asyncio.run(coro)
+    except Exception as e:
+        print(f"Error in run_async: {str(e)}")
+        import traceback
+
+        traceback.print_exc()
+        raise

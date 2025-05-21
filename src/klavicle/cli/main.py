@@ -81,7 +81,7 @@ def unset_config(key: str):
 
 
 @config.command("set-api-key")
-@click.argument("provider", type=click.Choice(["openai", "anthropic"]))
+@click.argument("provider", type=click.Choice(["anthropic"]))
 @click.argument("api_key")
 def set_api_key(provider: str, api_key: str):
     """Set API key for an AI provider."""
@@ -89,7 +89,7 @@ def set_api_key(provider: str, api_key: str):
 
 
 @config.command("set-default-provider")
-@click.argument("provider", type=click.Choice(["openai", "anthropic", "mock"]))
+@click.argument("provider", type=click.Choice(["anthropic", "mock"]))
 def set_default_provider(provider: str):
     """Set default AI provider."""
     set_default_provider_impl(provider)
@@ -196,7 +196,7 @@ def create_list(name: str, description: str):
 )
 @click.option(
     "--ai-provider",
-    type=click.Choice(["openai", "anthropic", "mock"]),
+    type=click.Choice(["anthropic", "mock"]),
     help="AI provider to use for analysis (requires API key)",
 )
 def analyze_lists(export_format: str, ai: bool, ai_provider: str):
@@ -284,7 +284,7 @@ def flows():
 )
 @click.option(
     "--ai-provider",
-    type=click.Choice(["openai", "anthropic", "mock"]),
+    type=click.Choice(["anthropic", "mock"]),
     help="AI provider to use for analysis (requires API key)",
 )
 def analyze_flows(days: int, export_format: str, ai: bool, ai_provider: str):
@@ -321,7 +321,7 @@ def campaigns():
 )
 @click.option(
     "--ai-provider",
-    type=click.Choice(["openai", "anthropic", "mock"]),
+    type=click.Choice(["anthropic", "mock"]),
     help="AI provider to use for analysis (requires API key)",
 )
 def analyze_campaigns(export_format: str, ai: bool, ai_provider: str):
@@ -367,7 +367,7 @@ def export_for_ai(data_type: str, file: str, dir: str):
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option(
     "--provider",
-    type=click.Choice(["openai", "anthropic", "mock"]),
+    type=click.Choice(["anthropic", "mock"]),
     help="AI provider to use for analysis (requires API key)",
 )
 def import_for_ai(file_path: str, provider: str):
@@ -381,7 +381,7 @@ def import_for_ai(file_path: str, provider: str):
 @ai.command("unified")
 @click.option(
     "--provider",
-    type=click.Choice(["openai", "anthropic", "mock"]),
+    type=click.Choice(["anthropic", "mock"]),
     help="AI provider to use for analysis (requires API key)",
 )
 @click.option(
@@ -391,10 +391,16 @@ def import_for_ai(file_path: str, provider: str):
 )
 def unified_analysis(provider: str, sample: bool):
     """Run unified AI analysis across all entities (campaigns, flows, lists)."""
-    run_async(unified_ai_analysis_impl(
-        provider=provider,
-        use_sample=sample
-    ))
+    print(f"Starting unified analysis CLI command with provider={provider}, sample={sample}")
+    try:
+        run_async(unified_ai_analysis_impl(
+            provider=provider,
+            use_sample=sample
+        ))
+    except Exception as e:
+        print(f"Error in unified_analysis command: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 
 @ai.command("analyze")
@@ -406,7 +412,7 @@ def unified_analysis(provider: str, sample: bool):
 )
 @click.option(
     "--provider",
-    type=click.Choice(["openai", "anthropic", "mock"]),
+    type=click.Choice(["anthropic", "mock"]),
     default="mock",
     help="AI provider to use for analysis (requires API key)",
 )

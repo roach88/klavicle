@@ -31,7 +31,7 @@ class TagAnalyzer:
         if flows:
             tag_map["flows"] = [tag for f in flows for tag in f.get("tags", [])]
         if lists_:
-            tag_map["lists"] = [tag for l in lists_ for tag in l.get("tags", [])]
+            tag_map["lists"] = [tag for lst in lists_ for tag in lst.get("tags", [])]
         tag_map["all"] = tag_map["campaigns"] + tag_map["flows"] + tag_map["lists"]
         return tag_map
 

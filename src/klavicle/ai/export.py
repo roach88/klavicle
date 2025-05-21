@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from rich.console import Console
 
 # Constants
-DEFAULT_EXPORT_DIR = "exports"
+DEFAULT_EXPORT_DIR = "outputs"
 
 
 def export_data_for_ai_analysis(

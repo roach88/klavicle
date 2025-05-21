@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 # Define provider types
-ProviderType = Literal["openai", "anthropic", "mock"]
+ProviderType = Literal["anthropic", "mock"]
 
 # Cache configuration
 CACHE_DIR = Path.home() / ".klavicle" / "cache" / "analysis"
@@ -161,34 +161,14 @@ class AIAnalyzer:
 
     def _setup_provider(self) -> None:
         """Set up the AI provider based on configuration."""
-        if self.provider == "openai":
-            from openai import AsyncOpenAI
-
-            self.api_url = "https://api.openai.com/v1/chat/completions"
-            self.client = AsyncOpenAI(
-                api_key=self.api_key or get_config().get_ai_provider_api_key("openai")
-            )
-        elif self.provider == "anthropic":
-            # Import but don't initialize yet so we can handle version differences
+        if self.provider == "anthropic":
             from anthropic import AsyncAnthropic
 
             self.api_url = "https://api.anthropic.com/v1/messages"
-            # Get the API key
             api_key = self.api_key or get_config().get_ai_provider_api_key("anthropic")
-            
-            # Initialize the client safely, handling different versions
-            try:
-                # Try initializing without proxies (for newer versions)
-                self.client = AsyncAnthropic(api_key=api_key)
-            except TypeError as e:
-                if "proxies" in str(e):
-                    # If 'proxies' keyword is causing issues, try initializing with specific parameters only
-                    logger.warning("Anthropic client initialization error, trying alternate method")
-                    self.client = AsyncAnthropic(api_key=api_key)
-                else:
-                    # Re-raise if it's another TypeError
-                    raise
+            self.client = AsyncAnthropic(api_key=api_key)
         else:
+            # Mock provider
             self.client = None
             self.api_url = None
 
@@ -652,53 +632,46 @@ Return your analysis as a JSON object with the following structure:
                     parsed_data = None
             return self._get_mock_response(data_type, parsed_data)
 
-        # Handle special case for Anthropic's client
-        if self.provider == "anthropic" and self.client:
+        # Anthropic API
+        elif self.provider == "anthropic" and self.client:
             try:
-                # Direct client usage for Anthropic
                 payload = self._get_provider_payload(prompt)
-                model = payload.pop("model", "claude-3-opus-20240229")
-                messages = payload.pop("messages", [{"role": "user", "content": prompt}])
-                system = payload.pop("system", "")
-                
-                # Log connection details if verbose logging is enabled
-                if logger.isEnabledFor(logging.DEBUG):
-                    if self.api_key:
-                        logger.debug(f"Anthropic API key: {self.api_key[:5]}...{self.api_key[-4:]}")
-                    logger.debug(f"Model: {model}")
-                
-                # Direct client call instead of using aiohttp
+                print(
+                    f"Making request to Anthropic API with model: {payload.get('model')}"
+                )
+
+                # Direct client usage for Anthropic
                 response = await self.client.messages.create(
-                    model=model,
-                    messages=messages,
-                    system=system,
+                    model=payload.get("model", "claude-3-opus-20240229"),
+                    messages=payload.get(
+                        "messages", [{"role": "user", "content": prompt}]
+                    ),
+                    system=payload.get("system", ""),
                     max_tokens=payload.get("max_tokens", 4000),
                     temperature=payload.get("temperature", 0.3),
                 )
-                
-                # Return the response
-                if hasattr(response, "content") and response.content:
-                    if isinstance(response.content, list):
-                        # Extract text from content blocks
-                        return "".join(block.text for block in response.content if hasattr(block, "text"))
-                    return str(response.content)
+
+                # Extract Anthropic response
+                if hasattr(response, "content") and isinstance(response.content, list):
+                    return "".join(
+                        getattr(block, "text", "")
+                        for block in response.content
+                        if getattr(block, "type", None) == "text"
+                    )
                 return str(response)
-            
             except Exception as e:
-                logger.error(f"Error using Anthropic client directly: {str(e)}")
-                logger.debug("Falling back to manual HTTP request")
-                # Fall through to the manual HTTP method below
-        
-        # Generic HTTP method for other providers or as fallback
+                logger.error(f"Error using Anthropic client: {str(e)}")
+                # Fall through to HTTP method
+                raise Exception(f"Failed to query Anthropic API: {str(e)}")
+
+        # Fallback HTTP method for Anthropic (should only happen in exceptional cases)
         headers = self._get_provider_headers()
         data = self._get_provider_payload(prompt)
 
         # Log connection details if verbose logging is enabled
         if self.provider == "anthropic" and logger.isEnabledFor(logging.DEBUG):
             if self.api_key:
-                logger.debug(
-                    f"Anthropic API key: {self.api_key[:5]}...{self.api_key[-4:]}"
-                )
+                logger.debug(f"API key: {self.api_key[:5]}...{self.api_key[-4:]}")
             logger.debug(f"Headers: {json.dumps(headers)}")
             logger.debug(f"Model: {self.model or data.get('model', 'default')}")
 
@@ -725,118 +698,57 @@ Return your analysis as a JSON object with the following structure:
 
     def _get_provider_headers(self) -> Dict[str, str]:
         """Get the appropriate headers for the configured provider."""
-        if self.provider == "openai":
-            return {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key or ''}",
-            }
-        elif self.provider == "anthropic":
+        if self.provider == "anthropic":
             return {
                 "Content-Type": "application/json",
                 "anthropic-version": "2023-06-01",
                 "x-api-key": self.api_key or "",
             }
         else:
+            # Mock provider
             return {"Content-Type": "application/json"}
 
     def _get_provider_payload(
         self, prompt: str, thinking: bool = False
     ) -> Dict[str, Any]:
         """Get the appropriate request payload for the configured provider."""
-        if self.provider == "openai":
+        if self.provider == "anthropic":
             return {
-                "model": self.model or "gpt-4-turbo",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,  # Lower temperature for more deterministic outputs
-                "response_format": {"type": "json_object"},  # Request JSON response
-            }
-        elif self.provider == "anthropic":
-            payload = {
                 "model": self.model or "claude-3-opus-20240229",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
                 "max_tokens": 4000,
                 "system": "You must respond with valid JSON only, omitting any preamble or explanation.",
             }
-            
-            # The thinking parameter was deprecated in newer versions
-            try:
-                # Only add if the client is initialized
-                if thinking and hasattr(self, 'client') and self.client:
-                    # Check if the anthropic version supports thinking
-                    import anthropic
-                    if hasattr(anthropic, "__version__"):
-                        version = anthropic.__version__
-                        # Only include thinking for versions that support it
-                        if version.startswith("0.") and int(version.split(".")[1]) < 51:
-                            payload["thinking"] = {
-                                "type": "enabled",
-                                "budget_tokens": 2048,
-                            }
-            except (ImportError, AttributeError, ValueError) as e:
-                logger.debug(f"Could not check for thinking support: {str(e)}")
-                
-            return payload
         else:
+            # Mock provider
             return {"prompt": prompt}
 
     def _extract_response_text(self, response_json: Dict[str, Any]) -> str:
         """Extract the response text from the provider-specific JSON response."""
-        if self.provider == "openai":
-            return response_json["choices"][0]["message"]["content"]
-        elif self.provider == "anthropic":
-            logger.debug("Extracting Anthropic response text")
-            # Handle the Anthropic API response format
+        if self.provider == "anthropic":
+            # For Anthropic, the response format differs between API versions
             try:
-                # Latest API format (Claude 3)
+                # Claude 3 format - content is a list of content blocks
                 if "content" in response_json:
-                    # Handle array of content blocks
                     if isinstance(response_json["content"], list):
-                        # Extract all text blocks and join them
-                        all_text = ""
-                        for block in response_json["content"]:
-                            if "type" in block and block["type"] == "text":
-                                all_text += block["text"]
-                        if all_text:
-                            logger.debug(
-                                f"Extracted text from content blocks: {all_text[:100]}..."
-                            )
-                            return all_text
-
-                    # Handle single content object
-                    elif (
-                        isinstance(response_json["content"], dict)
-                        and "text" in response_json["content"]
-                    ):
-                        text = response_json["content"]["text"]
-                        logger.debug(
-                            f"Extracted text from content dict: {text[:100]}..."
+                        return "".join(
+                            getattr(block, "text", "")
+                            for block in response_json["content"]
+                            if getattr(block, "type", None) == "text"
                         )
-                        return text
 
-                # Check for response in completion field (Claude 2 format)
-                if "completion" in response_json:
-                    logger.debug(
-                        f"Found completion field: {response_json['completion'][:100]}..."
-                    )
+                # Claude 2 format - completion is a string
+                elif "completion" in response_json:
                     return response_json["completion"]
 
-                # Try other possible fields
-                for field in ["text", "message", "result", "output", "response"]:
-                    if field in response_json:
-                        logger.debug(f"Found {field} field")
-                        return str(response_json[field])
-
-            except (KeyError, IndexError, TypeError) as e:
-                logger.warning(
-                    f"Error extracting Anthropic response text using primary method: {str(e)}"
-                )
-                logger.debug(f"Exception in extract_response_text: {str(e)}")
-
-            # Last resort: return the entire response as json string
-            logger.debug("Using last resort - returning full response")
-            return json.dumps(response_json)
+                # Fall back to string representation
+                return str(response_json)
+            except Exception as e:
+                logger.error(f"Error extracting response text: {str(e)}")
+                return str(response_json)
         else:
+            # Mock provider
             return str(response_json)
 
     def _get_mock_response(

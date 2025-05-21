@@ -23,7 +23,7 @@ async def run_enhanced_analysis():
     """Run enhanced analysis with detailed instructions."""
     
     # Load enhanced prompt
-    enhanced_prompt_path = Path("enhanced_prompt.txt")
+    enhanced_prompt_path = Path("prompts/enhanced_prompt.txt")
     if not enhanced_prompt_path.exists():
         print("Enhanced prompt file not found. Please create it first.")
         return
@@ -49,7 +49,12 @@ async def run_enhanced_analysis():
     
     # Create timestamp for filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_filename = f"enhanced_analysis_{timestamp}.md"
+    
+    # Create outputs directory if it doesn't exist
+    outputs_dir = Path("outputs")
+    outputs_dir.mkdir(exist_ok=True)
+    
+    output_filename = outputs_dir / f"enhanced_analysis_{timestamp}.md"
     
     print(f"Running enhanced analysis, output will be saved to {output_filename}")
     

@@ -58,3 +58,6 @@ setup/
 # Analysis outputs
 *_analysis_*.csv
 *_analysis_*.json
+*_analysis_*.md
+outputs/
+unified_analysis_*.md

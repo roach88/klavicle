@@ -52,16 +52,16 @@ Klavicle streamlines your Klaviyo workflow in three key areas:
 
 1. Clone the repository:
 
-```bash
-git clone https://github.com/yourusername/klavicle.git
-cd klavicle
-```
+   ```bash
+   git clone https://github.com/yourusername/klavicle.git
+   cd klavicle
+   ```
 
 2. Install using Poetry:
 
-```bash
-poetry install
-```
+   ```bash
+   poetry install
+   ```
 
 ## Configuration
 
@@ -131,7 +131,7 @@ klavicle config unset key
 
 All Klavicle commands follow this general structure:
 
-```
+```bash
 klavicle <module> <command> [options] [arguments]
 ```
 
@@ -459,7 +459,7 @@ klavicle ai analyze --entity-type=flows --provider=anthropic --export-format=md
 klavicle tag add list list_id recommended_tag
 
 # 5. Run a unified analysis after making changes
-klavicle ai analyze --entity-type=all --provider=anthropic --export-format=md
+klavicle ai analyze --entity-type=all --provider=anthropic --export=md
 ```
 
 ### 4. Analyzing Campaign Performance
@@ -519,7 +519,7 @@ poetry run pytest
 3. Format code:
 
 ```bash
-poetry run black .
+poetry run ruff .
 poetry run isort .
 ```
 
@@ -547,29 +547,4 @@ poetry run mypy .
 
 3. **Query Parameters**
 
-   - Parameters in SQL queries must be prefixed with `:` (e.g., `:param_name`)
-   - Parameter values must be provided when running queries
-   - Verify parameter types match expected values
-
-4. **AI Analysis Issues**
-   - Authentication errors: Check your API keys
-   - Long analysis times: Use the `--sample` flag for faster results
-   - Rate limits: Switch to `--provider=mock` option for testing
-   - JSON parsing errors: Check for valid Klaviyo data structure
-   - Empty responses: Ensure your account has the relevant entity data
-   - Cache issues: Use `--force-refresh` to bypass cache
-   - Progress tracking: Monitor long-running analyses with status updates
-
-### Getting Help
-
-If you encounter any issues:
-
-1. Check the error message for specific details
-2. Verify your configuration
-3. Ensure you're using the correct command syntax
-4. Check the logs for more detailed error information
-5. Use the mock provider (`--provider=mock`) to test functionality without API costs
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+   - Parameters in SQL queries must be prefixed with `:` (e.g., `
