@@ -54,6 +54,10 @@ Thumbs.db
 
 # Project specific
 setup/
+docs/
+exports/
+prompts/
+.cursorrules
 
 # Analysis outputs
 *_analysis_*.csv
